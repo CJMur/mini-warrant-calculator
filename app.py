@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -94,9 +94,8 @@ def load_warrant_data():
             default_short_rate = float(funding_df['Funding Rate Short'].iloc[0]) / 100.0
         except Exception as e:
             print(f"Failed to load funding tab: {e}")
-            # Fallbacks in case the second tab gets deleted or un-published
             default_long_rate = 0.087
-            default_short_rate = 0.001
+            default_short_rate = -0.015 # Defaulting to the new standard
 
         # 2. Fetch Main Warrant Data
         df = pd.read_csv(SHEET_CSV_URL)
@@ -291,11 +290,13 @@ if not warrants_df.empty:
             for i, date_str in enumerate(date_strs):
                 days_passed = i * adj_date_days
                 
+                # THE FIX: Both Long and Short now ADD the daily interest.
+                # If the funding_rate is negative (-1.50%), it naturally reduces the strike.
+                adj_strike = strike + (daily_interest * days_passed)
+                
                 if 'Long' in warrant['Type']:
-                    adj_strike = strike + (daily_interest * days_passed)
                     mini_val = max(0.0, (price - adj_strike) / (multiplier * fx_rate))
                 else:
-                    adj_strike = strike - (daily_interest * days_passed)
                     mini_val = max(0.0, (adj_strike - price) / (multiplier * fx_rate))
                 
                 if current_mini_price > 0:
