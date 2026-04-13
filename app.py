@@ -7,7 +7,10 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
-# --- CSS STYLING (Imported from TradersCircle Options Calculator) ---
+# --- VERSION CONTROL ---
+VERSION = "1.0.0"
+
+# --- CSS STYLING ---
 st.markdown("""
 <style>
     /* --- WHITE-LABEL INVISIBILITY CLOAK --- */
@@ -91,10 +94,24 @@ def load_warrant_data():
 
 warrants_df = load_warrant_data()
 
-# --- 2. SEARCH & SELECT MODULE ---
-st.title("MINI Warrant Search")
-
+# --- 2. SEARCH MODULE ---
 if not warrants_df.empty:
+    
+    # Matching Header for Search
+    st.markdown(f"""
+    <div class="header-box">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <div class="header-title">MINI Warrant Search</div>
+                <div class="header-sub">Click a row below to select a warrant and load the calculator</div>
+            </div>
+            <div style="text-align: right;">
+                <span class="status-tag">v{VERSION}</span>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
     search_query = st.text_input("Search by Ticker or Underlying (e.g., A2M, BHP):").upper()
     
     if search_query:
@@ -105,16 +122,23 @@ if not warrants_df.empty:
     else:
         filtered_df = warrants_df
 
-    st.dataframe(
+    # Interactive Dataframe with Row Selection
+    selection_event = st.dataframe(
         filtered_df[['Code', 'Underlying', 'Type', 'Strike', 'Stop Loss Trigger Level', 'Bid', 'Ask']], 
         hide_index=True, 
-        use_container_width=True
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="single-row"
     )
-    
-    selected_warrant_code = st.selectbox("Select a Warrant Code to Analyze:", filtered_df['Code'].tolist())
+
+    # Check if a row was clicked
+    selected_rows = selection_event.selection.rows
 
     # --- 3. CALCULATOR MODULE ---
-    if selected_warrant_code:
+    if selected_rows:
+        # Extract the clicked row from the filtered dataframe
+        selected_index = selected_rows[0]
+        selected_warrant_code = filtered_df.iloc[selected_index]['Code']
         warrant = warrants_df[warrants_df['Code'] == selected_warrant_code].iloc[0]
         
         sheet_price = warrant.get('Underlying Spot Price')
@@ -138,9 +162,9 @@ if not warrants_df.empty:
         else:
             current_mini_price = max(0.0, (strike - live_price) / (multiplier * fx_rate))
 
-        st.markdown("---")
+        st.markdown("<br><br>", unsafe_allow_html=True)
         
-        # --- CUSTOM HEADER INJECTION ---
+        # --- CUSTOM HEADER FOR CALCULATOR ---
         st.markdown(f"""
         <div class="header-box">
             <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -213,9 +237,9 @@ if not warrants_df.empty:
                         pnl = ((mini_val / current_mini_price) - 1) * 100
                     else:
                         pnl = (mini_val - current_mini_price) * mini_qty
-                    row_data[date_str] = pnl # Store RAW float here
+                    row_data[date_str] = pnl 
                 else:
-                    row_data[date_str] = np.nan # Store NaN for invalid cells
+                    row_data[date_str] = np.nan 
                     
             matrix_data.append(row_data)
 
