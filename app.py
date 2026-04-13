@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
-# --- CSS STYLING ---
+# --- CSS STYLING (With Font Size Increases) ---
 st.markdown("""
 <style>
     /* --- WHITE-LABEL INVISIBILITY CLOAK --- */
@@ -22,16 +22,30 @@ st.markdown("""
 
     .block-container { padding-top: 2rem !important; padding-bottom: 5rem !important; }
     
+    /* Overall Font Size Increases */
+    p, span, label, div[data-testid="stMarkdownContainer"] {
+        font-size: 16px;
+    }
+    
+    [data-testid="stMetricValue"] {
+        font-size: 2.2rem !important;
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 1.1rem !important;
+        font-weight: 600;
+        color: #94a3b8;
+    }
+
     .header-box {
         padding: 1.5rem; background-color: #0e1b32; border-radius: 10px; color: white;
         margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         border-bottom: 4px solid #1DBFD2;
     }
-    .header-title { font-size: 24px; font-weight: 700; margin: 0; }
-    .header-sub { font-size: 14px; opacity: 0.8; margin: 0; }
+    .header-title { font-size: 28px; font-weight: 700; margin: 0; }
+    .header-sub { font-size: 16px; opacity: 0.8; margin: 0; }
     .status-tag {
         background-color: rgba(255,255,255,0.15); padding: 4px 10px; border-radius: 4px;
-        font-size: 12px; font-family: monospace;
+        font-size: 14px; font-family: monospace;
     }
     
     div[data-testid="stButton"] button[kind="primary"] {
@@ -89,10 +103,20 @@ def load_warrant_data():
             'MINI Short': 'MINI Short ▼'
         })
         
+        # Safely clean numeric and percentage columns
         cols_to_clean = ['Strike', 'Stop Loss Trigger Level', 'Multiplier', 'Underlying Spot Price']
+        pct_cols_to_clean = ['Effective gearing', 'Effective Gearing', 'Distance to Knock-Out']
+        
         for col in cols_to_clean:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
+                
+        for col in pct_cols_to_clean:
+            if col in df.columns:
+                # Strip '%' if it exists, then convert to float so we can format it properly later
+                df[col] = df[col].astype(str).str.replace('%', '', regex=False)
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                
         return df
     except Exception as e:
         st.error(f"⚠️ Could not load data from Google Sheets. Error: {e}")
@@ -127,17 +151,32 @@ if not warrants_df.empty:
     else:
         filtered_df = warrants_df
 
-    # Interactive Dataframe with newly added columns and formatting
+    # Dynamically build display columns in case sheet headers vary slightly
+    display_cols = ['Code', 'Underlying', 'Type', 'Strike', 'Stop Loss Trigger Level', 'Multiplier']
+    
+    gearing_col = 'Effective gearing' if 'Effective gearing' in filtered_df.columns else 'Effective Gearing'
+    if gearing_col in filtered_df.columns: display_cols.append(gearing_col)
+    
+    ko_col = 'Distance to Knock-Out'
+    if ko_col in filtered_df.columns: display_cols.append(ko_col)
+    
+    display_cols.extend(['Bid', 'Ask'])
+
+    # Ensure we only try to display columns that actually exist in the dataframe
+    display_cols = [c for c in display_cols if c in filtered_df.columns]
+
+    # Interactive Dataframe
     selection_event = st.dataframe(
-        filtered_df[['Code', 'Ticker', 'Underlying', 'Type', 'Strike', 'Stop Loss Trigger Level', 'Multiplier', 'Bid', 'Ask']], 
+        filtered_df[display_cols], 
         hide_index=True, 
         use_container_width=True,
         on_select="rerun",
         selection_mode="single-row",
         column_config={
-            "Ticker": "ASX Code",
             "Stop Loss Trigger Level": "Stop Loss",
             "Strike": st.column_config.NumberColumn("Strike", format="$%.4f"),
+            gearing_col: st.column_config.NumberColumn("Effective Gearing", format="%.2f%%"),
+            ko_col: st.column_config.NumberColumn("Dist. to Knock-Out", format="%.2f%%"),
             "Bid": st.column_config.NumberColumn("Bid", format="$%.3f"),
             "Ask": st.column_config.NumberColumn("Ask", format="$%.3f")
         }
@@ -167,7 +206,6 @@ if not warrants_df.empty:
         fx_rate = float(warrant.get('FX Rate', 1.0))
         stop_loss = float(warrant.get('Stop Loss Trigger Level', 0.0)) if pd.notna(warrant.get('Stop Loss Trigger Level')) else 0.0
 
-        # Updated logic to catch "Long" regardless of the arrow symbol
         if 'Long' in warrant['Type']:
             current_mini_price = max(0.0, (live_price - strike) / (multiplier * fx_rate))
         else:
@@ -234,7 +272,6 @@ if not warrants_df.empty:
             for i, date_str in enumerate(date_strs):
                 days_passed = i * adj_date_days
                 
-                # Check for 'Long' inside the string since the arrow is attached now
                 if 'Long' in warrant['Type']:
                     adj_strike = strike + (daily_interest * days_passed)
                     mini_val = max(0.0, (price - adj_strike) / (multiplier * fx_rate))
