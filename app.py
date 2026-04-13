@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -83,6 +83,12 @@ def load_warrant_data():
         df['Funding Rate'] = np.where(df['Type'] == 'MINI Long', 0.087, 0.001)
         df['FX Rate'] = 1.0
         
+        # Add visual arrows to the Type column
+        df['Type'] = df['Type'].replace({
+            'MINI Long': 'MINI Long ▲', 
+            'MINI Short': 'MINI Short ▼'
+        })
+        
         cols_to_clean = ['Strike', 'Stop Loss Trigger Level', 'Multiplier', 'Underlying Spot Price']
         for col in cols_to_clean:
             if col in df.columns:
@@ -97,7 +103,6 @@ warrants_df = load_warrant_data()
 # --- 2. SEARCH MODULE ---
 if not warrants_df.empty:
     
-    # Matching Header for Search
     st.markdown(f"""
     <div class="header-box">
         <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -122,21 +127,26 @@ if not warrants_df.empty:
     else:
         filtered_df = warrants_df
 
-    # Interactive Dataframe with Row Selection
+    # Interactive Dataframe with newly added columns and formatting
     selection_event = st.dataframe(
-        filtered_df[['Code', 'Underlying', 'Type', 'Strike', 'Stop Loss Trigger Level', 'Bid', 'Ask']], 
+        filtered_df[['Code', 'Ticker', 'Underlying', 'Type', 'Strike', 'Stop Loss Trigger Level', 'Multiplier', 'Bid', 'Ask']], 
         hide_index=True, 
         use_container_width=True,
         on_select="rerun",
-        selection_mode="single-row"
+        selection_mode="single-row",
+        column_config={
+            "Ticker": "ASX Code",
+            "Stop Loss Trigger Level": "Stop Loss",
+            "Strike": st.column_config.NumberColumn("Strike", format="$%.4f"),
+            "Bid": st.column_config.NumberColumn("Bid", format="$%.3f"),
+            "Ask": st.column_config.NumberColumn("Ask", format="$%.3f")
+        }
     )
 
-    # Check if a row was clicked
     selected_rows = selection_event.selection.rows
 
     # --- 3. CALCULATOR MODULE ---
     if selected_rows:
-        # Extract the clicked row from the filtered dataframe
         selected_index = selected_rows[0]
         selected_warrant_code = filtered_df.iloc[selected_index]['Code']
         warrant = warrants_df[warrants_df['Code'] == selected_warrant_code].iloc[0]
@@ -157,14 +167,14 @@ if not warrants_df.empty:
         fx_rate = float(warrant.get('FX Rate', 1.0))
         stop_loss = float(warrant.get('Stop Loss Trigger Level', 0.0)) if pd.notna(warrant.get('Stop Loss Trigger Level')) else 0.0
 
-        if warrant['Type'] == 'MINI Long':
+        # Updated logic to catch "Long" regardless of the arrow symbol
+        if 'Long' in warrant['Type']:
             current_mini_price = max(0.0, (live_price - strike) / (multiplier * fx_rate))
         else:
             current_mini_price = max(0.0, (strike - live_price) / (multiplier * fx_rate))
 
         st.markdown("<br><br>", unsafe_allow_html=True)
         
-        # --- CUSTOM HEADER FOR CALCULATOR ---
         st.markdown(f"""
         <div class="header-box">
             <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -215,7 +225,6 @@ if not warrants_df.empty:
         
         daily_interest = (strike * funding_rate) / 365
         
-        # --- MATRIX GENERATION (Storing Floats for Heatmap) ---
         matrix_data = []
         for price in row_prices:
             is_spot = math.isclose(price, base_share_price, rel_tol=1e-5)
@@ -225,7 +234,8 @@ if not warrants_df.empty:
             for i, date_str in enumerate(date_strs):
                 days_passed = i * adj_date_days
                 
-                if warrant['Type'] == 'MINI Long':
+                # Check for 'Long' inside the string since the arrow is attached now
+                if 'Long' in warrant['Type']:
                     adj_strike = strike + (daily_interest * days_passed)
                     mini_val = max(0.0, (price - adj_strike) / (multiplier * fx_rate))
                 else:
@@ -245,7 +255,6 @@ if not warrants_df.empty:
 
         df_mx = pd.DataFrame(matrix_data).set_index("Share Price")
         
-        # --- HEATMAP AND FORMATTING ---
         def format_pnl(val):
             if pd.isna(val): return "-"
             if calc_type == "P&L %": return f"{val:.2f}%"
