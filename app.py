@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -104,7 +104,9 @@ def load_warrant_data():
         })
         
         cols_to_clean = ['Strike', 'Stop Loss Trigger Level', 'Multiplier', 'Underlying Spot Price']
-        pct_cols_to_clean = ['Effective gearing', 'Effective Gearing', 'Distance to Knock-Out']
+        
+        # Added Distance to Stop Loss to the percentage scrubber
+        pct_cols_to_clean = ['Effective gearing', 'Effective Gearing', 'Distance to Knock-Out', 'Distance to Stop Loss']
         
         for col in cols_to_clean:
             if col in df.columns:
@@ -153,6 +155,7 @@ if not warrants_df.empty:
     else:
         filtered_df = warrants_df
 
+    # Build display columns 
     display_cols = ['Code', 'Underlying', 'Type', 'Strike', 'Stop Loss Trigger Level', 'Multiplier']
     
     gearing_col = 'Effective gearing' if 'Effective gearing' in filtered_df.columns else 'Effective Gearing'
@@ -160,10 +163,14 @@ if not warrants_df.empty:
     
     ko_col = 'Distance to Knock-Out'
     if ko_col in filtered_df.columns: display_cols.append(ko_col)
+        
+    sl_dist_col = 'Distance to Stop Loss'
+    if sl_dist_col in filtered_df.columns: display_cols.append(sl_dist_col)
     
     display_cols.extend(['Bid', 'Ask'])
     display_cols = [c for c in display_cols if c in filtered_df.columns]
 
+    # Added formatting for the new Stop Loss Dollar Sign and Distance to Stop Loss Percentage
     selection_event = st.dataframe(
         filtered_df[display_cols], 
         hide_index=True, 
@@ -171,10 +178,11 @@ if not warrants_df.empty:
         on_select="rerun",
         selection_mode="single-row",
         column_config={
-            "Stop Loss Trigger Level": "Stop Loss",
+            "Stop Loss Trigger Level": st.column_config.NumberColumn("Stop Loss", format="$%.2f"),
             "Strike": st.column_config.NumberColumn("Strike", format="$%.4f"),
             gearing_col: st.column_config.NumberColumn("Effective Gearing", format="%.2f%%"),
             ko_col: st.column_config.NumberColumn("Dist. to Knock-Out", format="%.2f%%"),
+            sl_dist_col: st.column_config.NumberColumn("Dist. to Stop Loss", format="%.2f%%"),
             "Bid": st.column_config.NumberColumn("Bid", format="$%.3f"),
             "Ask": st.column_config.NumberColumn("Ask", format="$%.3f")
         }
