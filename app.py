@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
-# --- CSS STYLING (With Font Size Increases) ---
+# --- CSS STYLING ---
 st.markdown("""
 <style>
     /* --- WHITE-LABEL INVISIBILITY CLOAK --- */
@@ -97,13 +97,12 @@ def load_warrant_data():
         df['Funding Rate'] = np.where(df['Type'] == 'MINI Long', 0.087, 0.001)
         df['FX Rate'] = 1.0
         
-        # Add visual arrows to the Type column
+        # --- COLORED ARROW INJECTION ---
         df['Type'] = df['Type'].replace({
-            'MINI Long': 'MINI Long ▲', 
-            'MINI Short': 'MINI Short ▼'
+            'MINI Long': '🟢 MINI Long ▲', 
+            'MINI Short': '🔴 MINI Short ▼'
         })
         
-        # Safely clean numeric and percentage columns
         cols_to_clean = ['Strike', 'Stop Loss Trigger Level', 'Multiplier', 'Underlying Spot Price']
         pct_cols_to_clean = ['Effective gearing', 'Effective Gearing', 'Distance to Knock-Out']
         
@@ -111,12 +110,17 @@ def load_warrant_data():
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
                 
+        # --- THE DECIMAL PERCENTAGE FIX ---
         for col in pct_cols_to_clean:
             if col in df.columns:
-                # Strip '%' if it exists, then convert to float so we can format it properly later
+                # Strip '%' if it accidentally exists
                 df[col] = df[col].astype(str).str.replace('%', '', regex=False)
                 df[col] = pd.to_numeric(df[col], errors='coerce')
                 
+                # If the max value in the column is abnormally small (e.g., 0.73), it's a decimal. Multiply by 100.
+                if df[col].dropna().max() <= 10.0:
+                    df[col] = df[col] * 100
+                    
         return df
     except Exception as e:
         st.error(f"⚠️ Could not load data from Google Sheets. Error: {e}")
@@ -151,7 +155,6 @@ if not warrants_df.empty:
     else:
         filtered_df = warrants_df
 
-    # Dynamically build display columns in case sheet headers vary slightly
     display_cols = ['Code', 'Underlying', 'Type', 'Strike', 'Stop Loss Trigger Level', 'Multiplier']
     
     gearing_col = 'Effective gearing' if 'Effective gearing' in filtered_df.columns else 'Effective Gearing'
@@ -161,11 +164,8 @@ if not warrants_df.empty:
     if ko_col in filtered_df.columns: display_cols.append(ko_col)
     
     display_cols.extend(['Bid', 'Ask'])
-
-    # Ensure we only try to display columns that actually exist in the dataframe
     display_cols = [c for c in display_cols if c in filtered_df.columns]
 
-    # Interactive Dataframe
     selection_event = st.dataframe(
         filtered_df[display_cols], 
         hide_index=True, 
