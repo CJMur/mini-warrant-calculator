@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.5.0"
+VERSION = "1.7.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -78,15 +78,29 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# Your live Google Sheet 
+# Google Sheets Live Data Links
 # ==========================================
 SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vREoxpGZIfWZGWyRF_I_N7KKJOC9OmGNgsPh7F0gRE4RN4RgBUUzhzk1h-ro6vSrlIg5rJRwXS5DXGr/pub?gid=0&single=true&output=csv"
+FUNDING_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vREoxpGZIfWZGWyRF_I_N7KKJOC9OmGNgsPh7F0gRE4RN4RgBUUzhzk1h-ro6vSrlIg5rJRwXS5DXGr/pub?gid=773772854&single=true&output=csv"
 
 # --- 1. DATA LOADING ---
 @st.cache_data(ttl=600) 
 def load_warrant_data():
     try:
+        # 1. Fetch Dynamic Funding Rates First
+        try:
+            funding_df = pd.read_csv(FUNDING_CSV_URL)
+            default_long_rate = float(funding_df['Funding Rate Long'].iloc[0]) / 100.0
+            default_short_rate = float(funding_df['Funding Rate Short'].iloc[0]) / 100.0
+        except Exception as e:
+            print(f"Failed to load funding tab: {e}")
+            # Fallbacks in case the second tab gets deleted or un-published
+            default_long_rate = 0.087
+            default_short_rate = 0.001
+
+        # 2. Fetch Main Warrant Data
         df = pd.read_csv(SHEET_CSV_URL)
+        
         def get_ticker(code):
             if isinstance(code, str) and len(code) >= 3:
                 if code.startswith('FX'): return None 
@@ -94,7 +108,10 @@ def load_warrant_data():
             return None
             
         df['Ticker'] = df['Code'].apply(get_ticker)
-        df['Funding Rate'] = np.where(df['Type'] == 'MINI Long', 0.087, 0.001)
+        
+        # Apply the dynamically fetched funding rates based on the Type column
+        df['Funding Rate'] = np.where(df['Type'] == 'MINI Long', default_long_rate, default_short_rate)
+        
         df['FX Rate'] = 1.0
         
         # --- COLORED SQUARE EMOJI INJECTION ---
@@ -104,8 +121,6 @@ def load_warrant_data():
         })
         
         cols_to_clean = ['Strike', 'Stop Loss Trigger Level', 'Multiplier', 'Underlying Spot Price']
-        
-        # Added Distance to Stop Loss to the percentage scrubber
         pct_cols_to_clean = ['Effective gearing', 'Effective Gearing', 'Distance to Knock-Out', 'Distance to Stop Loss']
         
         for col in cols_to_clean:
@@ -155,7 +170,6 @@ if not warrants_df.empty:
     else:
         filtered_df = warrants_df
 
-    # Build display columns 
     display_cols = ['Code', 'Underlying', 'Type', 'Strike', 'Stop Loss Trigger Level', 'Multiplier']
     
     gearing_col = 'Effective gearing' if 'Effective gearing' in filtered_df.columns else 'Effective Gearing'
@@ -170,7 +184,6 @@ if not warrants_df.empty:
     display_cols.extend(['Bid', 'Ask'])
     display_cols = [c for c in display_cols if c in filtered_df.columns]
 
-    # Added formatting for the new Stop Loss Dollar Sign and Distance to Stop Loss Percentage
     selection_event = st.dataframe(
         filtered_df[display_cols], 
         hide_index=True, 
@@ -178,13 +191,13 @@ if not warrants_df.empty:
         on_select="rerun",
         selection_mode="single-row",
         column_config={
-            "Stop Loss Trigger Level": st.column_config.NumberColumn("Stop Loss", format="$%.2f"),
-            "Strike": st.column_config.NumberColumn("Strike", format="$%.4f"),
-            gearing_col: st.column_config.NumberColumn("Effective Gearing", format="%.2f%%"),
-            ko_col: st.column_config.NumberColumn("Dist. to Knock-Out", format="%.2f%%"),
-            sl_dist_col: st.column_config.NumberColumn("Dist. to Stop Loss", format="%.2f%%"),
-            "Bid": st.column_config.NumberColumn("Bid", format="$%.3f"),
-            "Ask": st.column_config.NumberColumn("Ask", format="$%.3f")
+            "Stop Loss Trigger Level": st.column_config.NumberColumn("Stop Loss", format="$%.2f", help="The price level where the warrant is 'stopped out' to prevent further losses."),
+            "Strike": st.column_config.NumberColumn("Strike", format="$%.4f", help="The financing level used to calculate the intrinsic value of the warrant."),
+            gearing_col: st.column_config.NumberColumn("Effective Gearing", format="%.2f%%", help="The degree of leverage the warrant provides compared to the underlying share."),
+            ko_col: st.column_config.NumberColumn("Dist. to Knock-Out", format="%.2f%%", help="The percentage distance between the current spot price and the Strike (financing level)."),
+            sl_dist_col: st.column_config.NumberColumn("Distance to Stop", format="%.2f%%", help="The percentage distance between the current spot price and the Stop Loss trigger level."),
+            "Bid": st.column_config.NumberColumn("Bid", format="$%.3f", help="The current highest price a buyer is willing to pay."),
+            "Ask": st.column_config.NumberColumn("Ask", format="$%.3f", help="The current lowest price a seller is willing to accept.")
         }
     )
 
@@ -236,11 +249,11 @@ if not warrants_df.empty:
         """, unsafe_allow_html=True)
             
         i_col1, i_col2, i_col3, i_col4, i_col5 = st.columns(5)
-        i_col1.metric("Selected Code", warrant['Code'])
-        i_col2.metric("Multiplier", int(multiplier))
-        i_col3.metric("Strike", f"${strike:.4f}")
-        i_col4.metric("Stop Loss", f"${stop_loss:.2f}")
-        i_col5.metric("Current Fair Value", f"${current_mini_price:.2f}")
+        i_col1.metric("Selected Code", warrant['Code'], help="The ASX code of the warrant currently being analyzed.")
+        i_col2.metric("Multiplier", int(multiplier), help="The number of warrants required to equal one underlying share.")
+        i_col3.metric("Strike", f"${strike:.4f}", help="The current financing level (strike price) of the warrant.")
+        i_col4.metric("Stop Loss", f"${stop_loss:.2f}", help="The price point at which the warrant is knocked out.")
+        i_col5.metric("Current Fair Value", f"${current_mini_price:.2f}", help="The theoretical current price of the warrant based on the underlying spot price.")
         
         st.divider()
 
@@ -248,15 +261,15 @@ if not warrants_df.empty:
         in_col1, in_col2, in_col3, in_col4 = st.columns(4)
         
         with in_col1:
-            base_share_price = st.number_input("Base Share Price", value=float(round(live_price, 2)), step=0.10)
-            mini_qty = st.number_input("Mini QTY", value=200, step=100)
+            base_share_price = st.number_input("Base Share Price", value=float(round(live_price, 2)), step=0.10, help="The starting share price for the middle 'SPOT' row of the payoff matrix.")
+            mini_qty = st.number_input("Mini QTY", value=200, step=100, help="The total quantity of MINI warrants purchased.")
         with in_col2:
-            adj_share_pct = st.number_input("ADJ Share %", value=2.0, step=1.0)
-            adj_date_days = st.number_input("ADJ Date (Days)", value=1, step=1)
+            adj_share_pct = st.number_input("ADJ Share %", value=2.0, step=1.0, help="The percentage step-size for the share price rows moving up and down the matrix.")
+            adj_date_days = st.number_input("ADJ Date (Days)", value=1, step=1, help="The number of days between each column in the matrix.")
         with in_col3:
-            calc_type = st.radio("Display Output As:", ["P&L %", "P&L $"])
+            calc_type = st.radio("Display Output As:", ["P&L %", "P&L $"], help="Toggle whether the matrix displays profit/loss as a percentage or in absolute dollars.")
         with in_col4:
-            funding_rate = st.number_input("Funding Rate (%)", value=float(warrant['Funding Rate']*100), step=0.1) / 100
+            funding_rate = st.number_input("Funding Rate (%)", value=float(warrant['Funding Rate']*100), step=0.1, help="The annualized interest rate used to calculate daily financing costs.") / 100
             st.info(f"**Max Risk:** ${(current_mini_price * mini_qty):.2f}")
 
         st.markdown("### Payoff Matrix")
