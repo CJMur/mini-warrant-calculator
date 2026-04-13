@@ -7,12 +7,12 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # ==========================================
-# Your live Google Sheet (Formatted for CSV output)
+# Your live Google Sheet 
 # ==========================================
 SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vREoxpGZIfWZGWyRF_I_N7KKJOC9OmGNgsPh7F0gRE4RN4RgBUUzhzk1h-ro6vSrlIg5rJRwXS5DXGr/pub?gid=0&single=true&output=csv"
 
 # --- 1. DATA LOADING (Live from Google Sheets) ---
-@st.cache_data(ttl=600) # Caches data for 10 mins 
+@st.cache_data(ttl=600) 
 def load_warrant_data():
     try:
         df = pd.read_csv(SHEET_CSV_URL)
@@ -26,12 +26,15 @@ def load_warrant_data():
             return None
             
         df['Ticker'] = df['Code'].apply(get_ticker)
-        
-        # Default Funding Rates (8.7% Long, 0.1% Short) 
         df['Funding Rate'] = np.where(df['Type'] == 'MINI Long', 0.087, 0.001)
-        
-        # Default FX Rate to 1 for domestic ASX stocks
         df['FX Rate'] = 1.0
+        
+        # --- THE FIX: Clean up nasty strings in number columns ---
+        cols_to_clean = ['Strike', 'Stop Loss Trigger Level', 'Multiplier', 'Underlying Spot Price']
+        for col in cols_to_clean:
+            if col in df.columns:
+                # This forces any text (like "-") into NaN (Not a Number)
+                df[col] = pd.to_numeric(df[col], errors='coerce')
         
         return df
     except Exception as e:
@@ -48,7 +51,7 @@ if not warrants_df.empty:
 
     with col1:
         st.subheader("1. Search Warrants")
-        search_query = st.text_input("Search by Ticker or Underlying (e.g., A2M, WTC):").upper()
+        search_query = st.text_input("Search by Ticker or Underlying (e.g., A2M, BHP):").upper()
         
         if search_query:
             filtered_df = warrants_df[
@@ -70,39 +73,42 @@ if not warrants_df.empty:
     if selected_warrant_code:
         warrant = warrants_df[warrants_df['Code'] == selected_warrant_code].iloc[0]
         
-        # Fetch live price from Yahoo Finance
-        live_price = warrant.get('Underlying Spot Price', 0.0) 
+        # --- THE FIX: Safely extract variables as Floats ---
+        # Use 0.0 as a fallback if the sheet value is blank/NaN
+        sheet_price = warrant.get('Underlying Spot Price')
+        live_price = float(sheet_price) if pd.notna(sheet_price) else 0.0
         
         if pd.notna(warrant['Ticker']):
             try:
                 yf_data = yf.Ticker(warrant['Ticker']).history(period="1d")
                 if not yf_data.empty:
-                    live_price = yf_data['Close'].iloc[-1]
+                    live_price = float(yf_data['Close'].iloc[-1])
             except:
                 pass 
 
+        strike = float(warrant['Strike']) if pd.notna(warrant['Strike']) else 0.0
+        multiplier = float(warrant.get('Multiplier', 1.0)) if pd.notna(warrant.get('Multiplier')) else 1.0
+        fx_rate = float(warrant.get('FX Rate', 1.0))
+        stop_loss = float(warrant.get('Stop Loss Trigger Level', 0.0)) if pd.notna(warrant.get('Stop Loss Trigger Level')) else 0.0
+
         # Calculate Current Mini Fair Value
-        multiplier = warrant.get('Multiplier', 1.0)
-        
         if warrant['Type'] == 'MINI Long':
-            current_mini_price = max(0, (live_price - warrant['Strike']) / (multiplier * warrant['FX Rate']))
+            current_mini_price = max(0.0, (live_price - strike) / (multiplier * fx_rate))
         else:
-            current_mini_price = max(0, (warrant['Strike'] - live_price) / (multiplier * warrant['FX Rate']))
+            current_mini_price = max(0.0, (strike - live_price) / (multiplier * fx_rate))
 
         with col2:
             st.subheader(f"2. Calculator: {warrant['Code']}")
             
-            # Display Static Info
             i_col1, i_col2, i_col3, i_col4, i_col5 = st.columns(5)
             i_col1.metric("Underlying", warrant['Underlying'])
             i_col2.metric("Type", warrant['Type'])
-            i_col3.metric("Strike", f"${warrant['Strike']:.4f}")
-            i_col4.metric("Stop Loss", f"${warrant.get('Stop Loss Trigger Level', 0):.2f}")
+            i_col3.metric("Strike", f"${strike:.4f}")
+            i_col4.metric("Stop Loss", f"${stop_loss:.2f}")
             i_col5.metric("Current Fair Value", f"${current_mini_price:.2f}")
             
             st.divider()
 
-            # Editable Cyan Inputs
             st.markdown("### Scenario Inputs")
             in_col1, in_col2, in_col3, in_col4 = st.columns(4)
             
@@ -118,19 +124,15 @@ if not warrants_df.empty:
                 funding_rate = st.number_input("Funding Rate (%)", value=float(warrant['Funding Rate']*100), step=0.1) / 100
                 st.info(f"**Max Risk:** ${(current_mini_price * mini_qty):.2f}")
 
-            # --- MATRIX GENERATION ---
             st.markdown("### Pricing Matrix")
             
-            # Generate Rows (Share Prices)
             steps = [10, 8, 6, 4, 2, 0, -2, -4, -6, -8, -10]
             row_prices = [base_share_price * (1 + (step * (adj_share_pct / 100) / 2)) for step in steps]
             
-            # Generate Columns (Dates)
             dates = [datetime.today() + timedelta(days=i * adj_date_days) for i in range(7)]
             date_strs = [d.strftime('%m/%d/%Y') for d in dates]
             
-            # Calculate daily interest added to strike
-            daily_interest = (warrant['Strike'] * funding_rate) / 365
+            daily_interest = (strike * funding_rate) / 365
             
             matrix_data = []
             for price in row_prices:
@@ -139,13 +141,12 @@ if not warrants_df.empty:
                     days_passed = i * adj_date_days
                     
                     if warrant['Type'] == 'MINI Long':
-                        adj_strike = warrant['Strike'] + (daily_interest * days_passed)
-                        mini_val = max(0, (price - adj_strike) / (multiplier * warrant['FX Rate']))
+                        adj_strike = strike + (daily_interest * days_passed)
+                        mini_val = max(0.0, (price - adj_strike) / (multiplier * fx_rate))
                     else:
-                        adj_strike = warrant['Strike'] - (daily_interest * days_passed)
-                        mini_val = max(0, (adj_strike - price) / (multiplier * warrant['FX Rate']))
+                        adj_strike = strike - (daily_interest * days_passed)
+                        mini_val = max(0.0, (adj_strike - price) / (multiplier * fx_rate))
                     
-                    # Calculate P&L
                     if current_mini_price > 0:
                         if calc_type == "P&L %":
                             pnl = ((mini_val / current_mini_price) - 1) * 100
@@ -158,6 +159,5 @@ if not warrants_df.empty:
                         
                 matrix_data.append(row_data)
 
-            # Display Matrix
             matrix_df = pd.DataFrame(matrix_data)
             st.dataframe(matrix_df, use_container_width=True, hide_index=True)
