@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -97,10 +97,10 @@ def load_warrant_data():
         df['Funding Rate'] = np.where(df['Type'] == 'MINI Long', 0.087, 0.001)
         df['FX Rate'] = 1.0
         
-        # --- COLORED ARROW INJECTION ---
+        # --- COLORED SQUARE EMOJI INJECTION ---
         df['Type'] = df['Type'].replace({
-            'MINI Long': '🟢 MINI Long ▲', 
-            'MINI Short': '🔴 MINI Short ▼'
+            'MINI Long': '🟩 MINI Long ▲', 
+            'MINI Short': '🟥 MINI Short ▼'
         })
         
         cols_to_clean = ['Strike', 'Stop Loss Trigger Level', 'Multiplier', 'Underlying Spot Price']
@@ -113,11 +113,9 @@ def load_warrant_data():
         # --- THE DECIMAL PERCENTAGE FIX ---
         for col in pct_cols_to_clean:
             if col in df.columns:
-                # Strip '%' if it accidentally exists
                 df[col] = df[col].astype(str).str.replace('%', '', regex=False)
                 df[col] = pd.to_numeric(df[col], errors='coerce')
                 
-                # If the max value in the column is abnormally small (e.g., 0.73), it's a decimal. Multiply by 100.
                 if df[col].dropna().max() <= 10.0:
                     df[col] = df[col] * 100
                     
