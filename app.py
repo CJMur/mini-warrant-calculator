@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.9.0"
+VERSION = "1.11.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -48,6 +48,16 @@ st.markdown("""
         font-size: 14px; font-family: monospace;
     }
     
+    /* Pull the Refresh Button up into the HTML Header Box */
+    div[data-testid="stButton"] {
+        margin-top: -80px;
+        margin-bottom: 40px;
+        position: relative;
+        z-index: 10;
+        float: right;
+        margin-right: 15px;
+    }
+    
     div[data-testid="stButton"] button[kind="primary"] {
         background-color: #1DBFD2 !important; border: none; color: white !important; font-weight: bold;
     }
@@ -80,23 +90,38 @@ st.markdown("""
 # ==========================================
 # Google Sheets Live Data Links
 # ==========================================
-# NOTE: Make sure to paste your newly generated individual tab links here!
-SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vREoxpGZIfWZGWyRF_I_N7KKJOC9OmGNgsPh7F0gRE4RN4RgBUUzhzk1h-ro6vSrlIg5rJRwXS5DXGr/pub?gid=0&single=true&output=csv"
-FUNDING_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vREoxpGZIfWZGWyRF_I_N7KKJOC9OmGNgsPh7F0gRE4RN4RgBUUzhzk1h-ro6vSrlIg5rJRwXS5DXGr/pub?gid=773772854&single=true&output=csv"
+SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR41nrL5N0HqOryvFqisPgJI68Klmki4XIQV5U9SivNgsBuit34urkUZxfePE-XkbXLtM9DLUhaNgs_/pub?gid=0&single=true&output=csv"
+FUNDING_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR41nrL5N0HqOryvFqisPgJI68Klmki4XIQV5U9SivNgsBuit34urkUZxfePE-XkbXLtM9DLUhaNgs_/pub?gid=773772854&single=true&output=csv"
 
 # --- 1. DATA LOADING ---
 @st.cache_data(ttl=600) 
 def load_warrant_data():
+    funding_error = None
+    default_long_rate = 0.087
+    default_short_rate = -0.015
+    
     try:
         # 1. Fetch Dynamic Funding Rates First
         try:
             funding_df = pd.read_csv(FUNDING_CSV_URL)
-            default_long_rate = float(funding_df['Funding Rate Long'].iloc[0]) / 100.0
-            default_short_rate = float(funding_df['Funding Rate Short'].iloc[0]) / 100.0
+            
+            # Intelligently find the correct columns regardless of exact naming
+            long_col = [c for c in funding_df.columns if 'Long' in str(c) or 'long' in str(c)][0]
+            short_col = [c for c in funding_df.columns if 'Short' in str(c) or 'short' in str(c)][0]
+            
+            # Helper to strip percent signs and properly format decimals
+            def parse_rate(raw_val):
+                raw_val = str(raw_val).strip()
+                if '%' in raw_val:
+                    return float(raw_val.replace('%', '')) / 100.0
+                val = float(raw_val)
+                return val / 100.0 if abs(val) > 0.5 else val
+                
+            default_long_rate = parse_rate(funding_df[long_col].iloc[0])
+            default_short_rate = parse_rate(funding_df[short_col].iloc[0])
+            
         except Exception as e:
-            print(f"Failed to load funding tab: {e}")
-            default_long_rate = 0.087
-            default_short_rate = -0.015 
+            funding_error = str(e)
 
         # 2. Fetch Main Warrant Data
         df = pd.read_csv(SHEET_CSV_URL)
@@ -132,21 +157,23 @@ def load_warrant_data():
                 if df[col].dropna().max() <= 10.0:
                     df[col] = df[col] * 100
                     
-        return df
+        return df, funding_error
     except Exception as e:
         st.error(f"⚠️ Could not load data from Google Sheets. Error: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(), funding_error
 
 # --- MANUAL REFRESH TRIGGER ---
-# Place the logic before loading the dataframe so it can clear the cache first
 col_header1, col_header2 = st.columns([4, 1])
 with col_header2:
-    st.write("") # Spacing
+    st.write("") 
     if st.button("🔄 Refresh Data", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
-warrants_df = load_warrant_data()
+warrants_df, current_funding_error = load_warrant_data()
+
+if current_funding_error:
+    st.error(f"⚠️ **Connection Alert:** The app could not read your new Funding Tab link, so it is temporarily using safety fallbacks (8.7% and -1.5%). Update the `FUNDING_CSV_URL` in your code with the correct tab GID. *(Error: {current_funding_error})*")
 
 # --- 2. SEARCH MODULE ---
 if not warrants_df.empty:
@@ -158,7 +185,7 @@ if not warrants_df.empty:
                 <div class="header-title">MINI Warrant Search</div>
                 <div class="header-sub">Click a row below to select a warrant and load the calculator</div>
             </div>
-            <div style="text-align: right;">
+            <div style="text-align: right; margin-right: 180px;">
                 <span class="status-tag">v{VERSION}</span>
             </div>
         </div>
@@ -274,7 +301,7 @@ if not warrants_df.empty:
         with in_col3:
             calc_type = st.radio("Display Output As:", ["P&L %", "P&L $"], help="Toggle whether the matrix displays profit/loss as a percentage or in absolute dollars.")
         with in_col4:
-            funding_rate = st.number_input("Funding Rate (%)", value=float(warrant['Funding Rate']*100), step=0.1, help="The annualized interest rate used to calculate daily financing costs.") / 100
+            funding_rate = st.number_input("Funding Rate (%)", value=float(warrant['Funding Rate']*100), step=0.1, disabled=True, help="The annualized interest rate used to calculate daily financing costs (Auto-updates via Google Sheets).") / 100
             st.info(f"**Max Risk:** ${(current_mini_price * mini_qty):.2f}")
 
         st.markdown("### Payoff Matrix")
