@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.11.0"
+VERSION = "1.12.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -46,16 +46,6 @@ st.markdown("""
     .status-tag {
         background-color: rgba(255,255,255,0.15); padding: 4px 10px; border-radius: 4px;
         font-size: 14px; font-family: monospace;
-    }
-    
-    /* Pull the Refresh Button up into the HTML Header Box */
-    div[data-testid="stButton"] {
-        margin-top: -80px;
-        margin-bottom: 40px;
-        position: relative;
-        z-index: 10;
-        float: right;
-        margin-right: 15px;
     }
     
     div[data-testid="stButton"] button[kind="primary"] {
@@ -162,14 +152,6 @@ def load_warrant_data():
         st.error(f"⚠️ Could not load data from Google Sheets. Error: {e}")
         return pd.DataFrame(), funding_error
 
-# --- MANUAL REFRESH TRIGGER ---
-col_header1, col_header2 = st.columns([4, 1])
-with col_header2:
-    st.write("") 
-    if st.button("🔄 Refresh Data", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
-
 warrants_df, current_funding_error = load_warrant_data()
 
 if current_funding_error:
@@ -185,7 +167,7 @@ if not warrants_df.empty:
                 <div class="header-title">MINI Warrant Search</div>
                 <div class="header-sub">Click a row below to select a warrant and load the calculator</div>
             </div>
-            <div style="text-align: right; margin-right: 180px;">
+            <div style="text-align: right;">
                 <span class="status-tag">v{VERSION}</span>
             </div>
         </div>
