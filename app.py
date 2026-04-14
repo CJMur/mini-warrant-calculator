@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.8.0"
+VERSION = "1.9.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -80,6 +80,7 @@ st.markdown("""
 # ==========================================
 # Google Sheets Live Data Links
 # ==========================================
+# NOTE: Make sure to paste your newly generated individual tab links here!
 SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vREoxpGZIfWZGWyRF_I_N7KKJOC9OmGNgsPh7F0gRE4RN4RgBUUzhzk1h-ro6vSrlIg5rJRwXS5DXGr/pub?gid=0&single=true&output=csv"
 FUNDING_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vREoxpGZIfWZGWyRF_I_N7KKJOC9OmGNgsPh7F0gRE4RN4RgBUUzhzk1h-ro6vSrlIg5rJRwXS5DXGr/pub?gid=773772854&single=true&output=csv"
 
@@ -95,7 +96,7 @@ def load_warrant_data():
         except Exception as e:
             print(f"Failed to load funding tab: {e}")
             default_long_rate = 0.087
-            default_short_rate = -0.015 # Defaulting to the new standard
+            default_short_rate = -0.015 
 
         # 2. Fetch Main Warrant Data
         df = pd.read_csv(SHEET_CSV_URL)
@@ -108,12 +109,9 @@ def load_warrant_data():
             
         df['Ticker'] = df['Code'].apply(get_ticker)
         
-        # Apply the dynamically fetched funding rates based on the Type column
         df['Funding Rate'] = np.where(df['Type'] == 'MINI Long', default_long_rate, default_short_rate)
-        
         df['FX Rate'] = 1.0
         
-        # --- COLORED SQUARE EMOJI INJECTION ---
         df['Type'] = df['Type'].replace({
             'MINI Long': '🟩 MINI Long ▲', 
             'MINI Short': '🟥 MINI Short ▼'
@@ -126,7 +124,6 @@ def load_warrant_data():
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
                 
-        # --- THE DECIMAL PERCENTAGE FIX ---
         for col in pct_cols_to_clean:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace('%', '', regex=False)
@@ -139,6 +136,15 @@ def load_warrant_data():
     except Exception as e:
         st.error(f"⚠️ Could not load data from Google Sheets. Error: {e}")
         return pd.DataFrame()
+
+# --- MANUAL REFRESH TRIGGER ---
+# Place the logic before loading the dataframe so it can clear the cache first
+col_header1, col_header2 = st.columns([4, 1])
+with col_header2:
+    st.write("") # Spacing
+    if st.button("🔄 Refresh Data", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
 warrants_df = load_warrant_data()
 
@@ -290,8 +296,6 @@ if not warrants_df.empty:
             for i, date_str in enumerate(date_strs):
                 days_passed = i * adj_date_days
                 
-                # THE FIX: Both Long and Short now ADD the daily interest.
-                # If the funding_rate is negative (-1.50%), it naturally reduces the strike.
                 adj_strike = strike + (daily_interest * days_passed)
                 
                 if 'Long' in warrant['Type']:
