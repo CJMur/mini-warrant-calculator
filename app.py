@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.12.0"
+VERSION = "1.13.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -174,12 +174,14 @@ if not warrants_df.empty:
     </div>
     """, unsafe_allow_html=True)
     
-    search_query = st.text_input("Search by Ticker or Underlying (e.g., A2M, BHP):").upper()
+    # Updated Placeholder Text to indicate Commodities
+    search_query = st.text_input("Search by Code or Underlying (e.g., BHP, Gold, Silver):")
     
     if search_query:
+        # THE FIX: Added case=False and na=False to completely ignore capitalization
         filtered_df = warrants_df[
-            warrants_df['Code'].astype(str).str.contains(search_query) | 
-            warrants_df['Underlying'].astype(str).str.contains(search_query)
+            warrants_df['Code'].astype(str).str.contains(search_query, case=False, na=False) | 
+            warrants_df['Underlying'].astype(str).str.contains(search_query, case=False, na=False)
         ]
     else:
         filtered_df = warrants_df
