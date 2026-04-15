@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.14.0"
+VERSION = "1.15.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -174,13 +174,13 @@ if not warrants_df.empty:
     </div>
     """, unsafe_allow_html=True)
     
-    # --- NEW: SIDE-BY-SIDE SEARCH BARS ---
+    # --- SIDE-BY-SIDE SEARCH BARS ---
     search_col1, search_col2 = st.columns(2)
     
     with search_col1:
         # Generate a clean, alphabetical list of all unique underlyings
         unique_underlyings = sorted(warrants_df['Underlying'].dropna().astype(str).unique().tolist())
-        dropdown_options = ["-- View All Underlyings --"] + unique_underlyings
+        dropdown_options = ["-- View All --"] + unique_underlyings
         
         # Searchable Dropdown
         selected_underlying = st.selectbox("Select or Search Underlying Asset:", options=dropdown_options)
@@ -192,7 +192,7 @@ if not warrants_df.empty:
     # Apply the logic based on what the user touches
     filtered_df = warrants_df.copy()
     
-    if selected_underlying != "-- View All Underlyings --":
+    if selected_underlying != "-- View All --":
         # Filter purely by the exact underlying they chose in the dropdown
         filtered_df = filtered_df[filtered_df['Underlying'].astype(str) == selected_underlying]
         
