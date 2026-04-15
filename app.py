@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.13.0"
+VERSION = "1.14.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -174,17 +174,32 @@ if not warrants_df.empty:
     </div>
     """, unsafe_allow_html=True)
     
-    # Updated Placeholder Text to indicate Commodities
-    search_query = st.text_input("Search by Code or Underlying (e.g., BHP, Gold, Silver):")
+    # --- NEW: SIDE-BY-SIDE SEARCH BARS ---
+    search_col1, search_col2 = st.columns(2)
     
-    if search_query:
-        # THE FIX: Added case=False and na=False to completely ignore capitalization
-        filtered_df = warrants_df[
-            warrants_df['Code'].astype(str).str.contains(search_query, case=False, na=False) | 
-            warrants_df['Underlying'].astype(str).str.contains(search_query, case=False, na=False)
-        ]
-    else:
-        filtered_df = warrants_df
+    with search_col1:
+        # Generate a clean, alphabetical list of all unique underlyings
+        unique_underlyings = sorted(warrants_df['Underlying'].dropna().astype(str).unique().tolist())
+        dropdown_options = ["-- View All Underlyings --"] + unique_underlyings
+        
+        # Searchable Dropdown
+        selected_underlying = st.selectbox("Select or Search Underlying Asset:", options=dropdown_options)
+        
+    with search_col2:
+        # Standard text search for specific warrant codes
+        search_code = st.text_input("Or Search by Specific Code (e.g., BHPKCA, XAU):")
+    
+    # Apply the logic based on what the user touches
+    filtered_df = warrants_df.copy()
+    
+    if selected_underlying != "-- View All Underlyings --":
+        # Filter purely by the exact underlying they chose in the dropdown
+        filtered_df = filtered_df[filtered_df['Underlying'].astype(str) == selected_underlying]
+        
+    if search_code:
+        # Layer on the specific code search (ignoring case)
+        filtered_df = filtered_df[filtered_df['Code'].astype(str).str.contains(search_code, case=False, na=False)]
+
 
     display_cols = ['Code', 'Underlying', 'Type', 'Strike', 'Stop Loss Trigger Level', 'Multiplier']
     
