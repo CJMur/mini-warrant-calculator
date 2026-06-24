@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.15.0"
+VERSION = "1.16.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -215,10 +215,11 @@ if not warrants_df.empty:
     display_cols.extend(['Bid', 'Ask'])
     display_cols = [c for c in display_cols if c in filtered_df.columns]
 
+    # FIX 1: Updated use_container_width=True to width="stretch" to clear deprecation warning
     selection_event = st.dataframe(
         filtered_df[display_cols], 
         hide_index=True, 
-        use_container_width=True,
+        width="stretch",
         on_select="rerun",
         selection_mode="single-row",
         column_config={
@@ -374,4 +375,5 @@ if not warrants_df.empty:
                     styles_df.loc[idx, col] = s
             return styles_df
 
-        st.dataframe(df_mx.style.apply(make_heatmap, axis=None).format(format_pnl), use_container_width=True, height=450)
+        # FIX 2: Updated use_container_width=True to width="stretch" to clear deprecation warning
+        st.dataframe(df_mx.style.apply(make_heatmap, axis=None).format(format_pnl), width="stretch", height=450)
