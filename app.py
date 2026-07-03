@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.16.0"
+VERSION = "1.17.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -80,8 +80,8 @@ st.markdown("""
 # ==========================================
 # Google Sheets Live Data Links
 # ==========================================
-SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR41nrL5N0HqOryvFqisPgJI68Klmki4XIQV5U9SivNgsBuit34urkUZxfePE-XkbXLtM9DLUhaNgs_/pub?gid=0&single=true&output=csv"
-FUNDING_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR41nrL5N0HqOryvFqisPgJI68Klmki4XIQV5U9SivNgsBuit34urkUZxfePE-XkbXLtM9DLUhaNgs_/pub?gid=773772854&single=true&output=csv"
+SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1ui3weG176qBJt9gVX1NFpiH2h0y9AyWWQU-3WnuTfD8/export?format=csv&gid=0"
+FUNDING_CSV_URL = "https://docs.google.com/spreadsheets/d/1ui3weG176qBJt9gVX1NFpiH2h0y9AyWWQU-3WnuTfD8/export?format=csv&gid=773772854"
 
 # --- 1. DATA LOADING ---
 @st.cache_data(ttl=600) 
@@ -178,28 +178,20 @@ if not warrants_df.empty:
     search_col1, search_col2 = st.columns(2)
     
     with search_col1:
-        # Generate a clean, alphabetical list of all unique underlyings
         unique_underlyings = sorted(warrants_df['Underlying'].dropna().astype(str).unique().tolist())
         dropdown_options = ["-- View All --"] + unique_underlyings
-        
-        # Searchable Dropdown
         selected_underlying = st.selectbox("Select or Search Underlying Asset:", options=dropdown_options)
         
     with search_col2:
-        # Standard text search for specific warrant codes
         search_code = st.text_input("Or Search by Specific Code (e.g., BHPKCA, XAU):")
     
-    # Apply the logic based on what the user touches
     filtered_df = warrants_df.copy()
     
     if selected_underlying != "-- View All --":
-        # Filter purely by the exact underlying they chose in the dropdown
         filtered_df = filtered_df[filtered_df['Underlying'].astype(str) == selected_underlying]
         
     if search_code:
-        # Layer on the specific code search (ignoring case)
         filtered_df = filtered_df[filtered_df['Code'].astype(str).str.contains(search_code, case=False, na=False)]
-
 
     display_cols = ['Code', 'Underlying', 'Type', 'Strike', 'Stop Loss Trigger Level', 'Multiplier']
     
@@ -215,7 +207,6 @@ if not warrants_df.empty:
     display_cols.extend(['Bid', 'Ask'])
     display_cols = [c for c in display_cols if c in filtered_df.columns]
 
-    # FIX 1: Updated use_container_width=True to width="stretch" to clear deprecation warning
     selection_event = st.dataframe(
         filtered_df[display_cols], 
         hide_index=True, 
@@ -262,6 +253,32 @@ if not warrants_df.empty:
         else:
             current_mini_price = max(0.0, (strike - live_price) / (multiplier * fx_rate))
 
+        # --- BIDIRECTIONAL CALLBACKS FOR RISK / QTY ---
+        def update_risk_cb(price):
+            st.session_state.risk_input = float(st.session_state.qty_input * price)
+
+        def update_qty_cb(price):
+            if price > 0:
+                # Floor the contracts so we never exceed the typed max risk
+                st.session_state.qty_input = int(math.floor(st.session_state.risk_input / price))
+                # Auto-correct the risk visual to show the actual math for those whole contracts
+                st.session_state.risk_input = float(st.session_state.qty_input * price)
+            else:
+                st.session_state.qty_input = 0
+                st.session_state.risk_input = 0.0
+
+        # Initialize session state for the current warrant
+        if 'current_warrant_code' not in st.session_state or st.session_state.current_warrant_code != warrant['Code']:
+            st.session_state.current_warrant_code = warrant['Code']
+            st.session_state.qty_input = 200
+            st.session_state.risk_input = float(200 * current_mini_price)
+        else:
+            # Sync risk if the spot price refreshed/changed dynamically
+            expected_risk = float(st.session_state.qty_input * current_mini_price)
+            if not math.isclose(st.session_state.risk_input, expected_risk, rel_tol=1e-5):
+                st.session_state.risk_input = expected_risk
+
+
         st.markdown("<br><br>", unsafe_allow_html=True)
         
         st.markdown(f"""
@@ -294,7 +311,8 @@ if not warrants_df.empty:
         
         with in_col1:
             base_share_price = st.number_input("Base Share Price", value=float(round(live_price, 2)), step=0.10, help="The starting share price for the middle 'SPOT' row of the payoff matrix.")
-            mini_qty = st.number_input("Mini QTY", value=200, step=100, help="The total quantity of MINI warrants purchased.")
+            # QTY Input mapped to session state
+            mini_qty = st.number_input("Mini QTY", step=100, key="qty_input", on_change=update_risk_cb, args=(current_mini_price,), help="The total quantity of MINI warrants purchased. Editing this automatically updates your Max Risk.")
         with in_col2:
             adj_share_pct = st.number_input("ADJ Share %", value=2.0, step=1.0, help="The percentage step-size for the share price rows moving up and down the matrix.")
             adj_date_days = st.number_input("ADJ Date (Days)", value=1, step=1, help="The number of days between each column in the matrix.")
@@ -302,7 +320,8 @@ if not warrants_df.empty:
             calc_type = st.radio("Display Output As:", ["P&L %", "P&L $"], help="Toggle whether the matrix displays profit/loss as a percentage or in absolute dollars.")
         with in_col4:
             funding_rate = st.number_input("Funding Rate (%)", value=float(warrant['Funding Rate']*100), step=0.1, disabled=True, help="The annualized interest rate used to calculate daily financing costs (Auto-updates via Google Sheets).") / 100
-            st.info(f"**Max Risk:** ${(current_mini_price * mini_qty):.2f}")
+            # RISK Input mapped to session state
+            max_risk = st.number_input("Max Risk ($)", step=100.0, key="risk_input", on_change=update_qty_cb, args=(current_mini_price,), help="Type your maximum budget here. The app will automatically calculate the highest whole number of contracts you can buy without exceeding this limit.")
 
         st.markdown("### Payoff Matrix")
         
@@ -375,5 +394,4 @@ if not warrants_df.empty:
                     styles_df.loc[idx, col] = s
             return styles_df
 
-        # FIX 2: Updated use_container_width=True to width="stretch" to clear deprecation warning
         st.dataframe(df_mx.style.apply(make_heatmap, axis=None).format(format_pnl), width="stretch", height=450)
