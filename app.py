@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.19.0"
+VERSION = "1.20.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -91,28 +91,22 @@ def load_warrant_data():
     default_short_rate = -0.015
     
     try:
-        # 1. Fetch Dynamic Funding Rates First
         try:
             funding_df = pd.read_csv(FUNDING_CSV_URL)
-            
-            # Intelligently find the correct columns regardless of exact naming
             long_col = [c for c in funding_df.columns if 'Long' in str(c) or 'long' in str(c)][0]
             short_col = [c for c in funding_df.columns if 'Short' in str(c) or 'short' in str(c)][0]
             
             def parse_rate(raw_val):
                 raw_val = str(raw_val).strip()
-                if '%' in raw_val:
-                    return float(raw_val.replace('%', '')) / 100.0
+                if '%' in raw_val: return float(raw_val.replace('%', '')) / 100.0
                 val = float(raw_val)
                 return val / 100.0 if abs(val) > 0.5 else val
                 
             default_long_rate = parse_rate(funding_df[long_col].iloc[0])
             default_short_rate = parse_rate(funding_df[short_col].iloc[0])
-            
         except Exception as e:
             funding_error = str(e)
 
-        # 2. Fetch Main Warrant Data
         df = pd.read_csv(SHEET_CSV_URL)
         
         def get_ticker(code):
@@ -122,7 +116,6 @@ def load_warrant_data():
             return None
             
         df['Ticker'] = df['Code'].apply(get_ticker)
-        
         df['Funding Rate'] = np.where(df['Type'] == 'MINI Long', default_long_rate, default_short_rate)
         df['FX Rate'] = 1.0
         
@@ -135,39 +128,13 @@ def load_warrant_data():
         pct_cols_to_clean = ['Effective gearing', 'Effective Gearing', 'Distance to Knock-Out', 'Distance to Stop Loss']
         
         for col in cols_to_clean:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+            if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
                 
         for col in pct_cols_to_clean:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.replace('%', '', regex=False)
                 df[col] = pd.to_numeric(df[col], errors='coerce')
-                
-                if df[col].dropna().max() <= 10.0:
-                    df[col] = df[col] * 100
-        
-        # --- NEW: THEORETICAL BID/ASK OVERRIDE ---
-        # Ignore CITI's sheet values and mathematically calculate Bid/Ask based on theoretical midpoint
-        if 'Underlying Spot Price' in df.columns and 'Strike' in df.columns:
-            spot = df['Underlying Spot Price']
-            strike = df['Strike']
-            
-            # Use Multiplier if it exists, otherwise default to 1.0
-            mult = df['Multiplier'].fillna(1.0)
-            mult = np.where(mult == 0, 1.0, mult)
-            
-            # Calculate theoretical midpoint based on Long/Short
-            midpoint = np.where(
-                df['Type'].str.contains('Long'),
-                (spot - strike) / mult,
-                (strike - spot) / mult
-            )
-            # Ensure price doesn't go below $0
-            midpoint = np.maximum(0.0, midpoint)
-            
-            # Apply strict 1-cent spread calculation
-            df['Bid'] = np.maximum(0.0, midpoint - 0.01)
-            df['Ask'] = midpoint + 0.01
+                if df[col].dropna().max() <= 10.0: df[col] = df[col] * 100
 
         return df, funding_error
     except Exception as e:
@@ -214,6 +181,35 @@ if not warrants_df.empty:
     if search_code:
         filtered_df = filtered_df[filtered_df['Code'].astype(str).str.contains(search_code, case=False, na=False)]
 
+    # --- DYNAMIC LIVE PRICING (For Search Results) ---
+    # Fetch live prices instantly if the user filters the list, overriding the stale sheet data
+    if search_code or selected_underlying != "-- View All --":
+        unique_tickers = filtered_df['Ticker'].dropna().unique().tolist()
+        if unique_tickers and len(unique_tickers) <= 10: 
+            for ticker in unique_tickers:
+                try:
+                    yf_data = yf.Ticker(ticker).history(period="1d")
+                    if not yf_data.empty:
+                        live_p = float(yf_data['Close'].iloc[-1])
+                        filtered_df.loc[filtered_df['Ticker'] == ticker, 'Underlying Spot Price'] = live_p
+                except:
+                    pass
+
+    # --- DYNAMIC BID/ASK MATH ---
+    spot = pd.to_numeric(filtered_df['Underlying Spot Price'], errors='coerce')
+    strike = pd.to_numeric(filtered_df['Strike'], errors='coerce')
+    mult = pd.to_numeric(filtered_df['Multiplier'], errors='coerce').fillna(1.0)
+    mult = np.where(mult == 0, 1.0, mult)
+    
+    is_long = filtered_df['Type'].str.contains('Long', case=False, na=False)
+    
+    midpoints = np.where(is_long, (spot - strike) / mult, (strike - spot) / mult)
+    midpoints = np.maximum(0.0, midpoints)
+    
+    filtered_df['Bid'] = np.maximum(0.0, midpoints - 0.01)
+    filtered_df['Ask'] = midpoints + 0.01
+
+
     display_cols = ['Code', 'Underlying', 'Type', 'Strike', 'Stop Loss Trigger Level', 'Multiplier']
     
     gearing_col = 'Effective gearing' if 'Effective gearing' in filtered_df.columns else 'Effective Gearing'
@@ -235,13 +231,13 @@ if not warrants_df.empty:
         on_select="rerun",
         selection_mode="single-row",
         column_config={
-            "Stop Loss Trigger Level": st.column_config.NumberColumn("Stop Loss", format="$%.2f", help="The price level where the warrant is 'stopped out' to prevent further losses."),
-            "Strike": st.column_config.NumberColumn("Strike", format="$%.4f", help="The financing level used to calculate the intrinsic value of the warrant."),
-            gearing_col: st.column_config.NumberColumn("Effective Gearing", format="%.2f%%", help="The degree of leverage the warrant provides compared to the underlying share."),
-            ko_col: st.column_config.NumberColumn("Dist. to Knock-Out", format="%.2f%%", help="The percentage distance between the current spot price and the Strike (financing level)."),
-            sl_dist_col: st.column_config.NumberColumn("Distance to Stop", format="%.2f%%", help="The percentage distance between the current spot price and the Stop Loss trigger level."),
-            "Bid": st.column_config.NumberColumn("Theoretical Bid", format="$%.3f", help="Calculated as (Midpoint - 1c). Represents pure theoretical value, overriding CITI's sheet."),
-            "Ask": st.column_config.NumberColumn("Theoretical Ask", format="$%.3f", help="Calculated as (Midpoint + 1c). Represents pure theoretical value, overriding CITI's sheet.")
+            "Stop Loss Trigger Level": st.column_config.NumberColumn("Stop Loss", format="$%.2f"),
+            "Strike": st.column_config.NumberColumn("Strike", format="$%.4f"),
+            gearing_col: st.column_config.NumberColumn("Effective Gearing", format="%.2f%%"),
+            ko_col: st.column_config.NumberColumn("Dist. to Knock-Out", format="%.2f%%"),
+            sl_dist_col: st.column_config.NumberColumn("Distance to Stop", format="%.2f%%"),
+            "Bid": st.column_config.NumberColumn("Bid", format="$%.3f"),
+            "Ask": st.column_config.NumberColumn("Ask", format="$%.3f")
         }
     )
 
@@ -314,11 +310,11 @@ if not warrants_df.empty:
         """, unsafe_allow_html=True)
             
         i_col1, i_col2, i_col3, i_col4, i_col5 = st.columns(5)
-        i_col1.metric("Selected Code", warrant['Code'], help="The ASX code of the warrant currently being analyzed.")
-        i_col2.metric("Multiplier", int(multiplier), help="The number of warrants required to equal one underlying share.")
-        i_col3.metric("Strike", f"${strike:.4f}", help="The current financing level (strike price) of the warrant.")
-        i_col4.metric("Stop Loss", f"${stop_loss:.2f}", help="The price point at which the warrant is knocked out.")
-        i_col5.metric("Current Fair Value", f"${current_mini_price:.2f}", help="The theoretical current price of the warrant based on the underlying spot price.")
+        i_col1.metric("Selected Code", warrant['Code'])
+        i_col2.metric("Multiplier", int(multiplier))
+        i_col3.metric("Strike", f"${strike:.4f}")
+        i_col4.metric("Stop Loss", f"${stop_loss:.2f}")
+        i_col5.metric("Current Fair Value", f"${current_mini_price:.2f}")
         
         st.divider()
 
@@ -326,16 +322,16 @@ if not warrants_df.empty:
         in_col1, in_col2, in_col3, in_col4 = st.columns(4)
         
         with in_col1:
-            base_share_price = st.number_input("Base Share Price", step=0.10, key="base_price_input", help="The starting share price for the middle 'SPOT' row of the payoff matrix.")
-            mini_qty = st.number_input("Mini QTY", step=100, key="qty_input", on_change=update_risk_cb, args=(current_mini_price,), help="The total quantity of MINI warrants purchased. Editing this automatically updates your Max Risk.")
+            base_share_price = st.number_input("Base Share Price", step=0.10, key="base_price_input")
+            mini_qty = st.number_input("Mini QTY", step=100, key="qty_input", on_change=update_risk_cb, args=(current_mini_price,))
         with in_col2:
-            adj_share_pct = st.number_input("ADJ Share %", value=2.0, step=1.0, help="The percentage step-size for the share price rows moving up and down the matrix.")
-            adj_date_days = st.number_input("ADJ Date (Days)", value=1, step=1, help="The number of days between each column in the matrix.")
+            adj_share_pct = st.number_input("ADJ Share %", value=2.0, step=1.0)
+            adj_date_days = st.number_input("ADJ Date (Days)", value=1, step=1)
         with in_col3:
-            calc_type = st.radio("Display Output As:", ["P&L %", "P&L $"], help="Toggle whether the matrix displays profit/loss as a percentage or in absolute dollars.")
+            calc_type = st.radio("Display Output As:", ["P&L %", "P&L $"])
         with in_col4:
-            funding_rate = st.number_input("Funding Rate (%)", value=float(warrant['Funding Rate']*100), step=0.1, disabled=True, help="The annualized interest rate used to calculate daily financing costs (Auto-updates via Google Sheets).") / 100
-            max_risk = st.number_input("Max Risk ($)", step=100.0, key="risk_input", on_change=update_qty_cb, args=(current_mini_price,), help="Type your maximum budget here. The app will automatically calculate the highest whole number of contracts you can buy without exceeding this limit.")
+            funding_rate = st.number_input("Funding Rate (%)", value=float(warrant['Funding Rate']*100), step=0.1, disabled=True) / 100
+            max_risk = st.number_input("Max Risk ($)", step=100.0, key="risk_input", on_change=update_qty_cb, args=(current_mini_price,))
 
         st.markdown("### Payoff Matrix")
         
