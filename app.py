@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.20.0"
+VERSION = "1.21.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -136,6 +136,41 @@ def load_warrant_data():
                 df[col] = pd.to_numeric(df[col], errors='coerce')
                 if df[col].dropna().max() <= 10.0: df[col] = df[col] * 100
 
+        # --- GLOBAL BULK LIVE PRICING FETCH ---
+        unique_tickers = [t for t in df['Ticker'].dropna().unique().tolist() if t]
+        if unique_tickers:
+            try:
+                # yf.download is highly optimized and multithreaded for bulk fetching
+                live_data = yf.download(unique_tickers, period="1d", progress=False)
+                if 'Close' in live_data:
+                    close_data = live_data['Close']
+                    for ticker in unique_tickers:
+                        try:
+                            if len(unique_tickers) == 1:
+                                live_p = float(close_data.iloc[-1])
+                            else:
+                                live_p = float(close_data[ticker].iloc[-1])
+                            
+                            if pd.notna(live_p):
+                                df.loc[df['Ticker'] == ticker, 'Underlying Spot Price'] = live_p
+                        except:
+                            pass
+            except Exception as e:
+                pass # Fail silently, will just fall back to sheet's static prices
+                
+        # --- GLOBAL DYNAMIC BID/ASK MATH ---
+        spot = pd.to_numeric(df['Underlying Spot Price'], errors='coerce')
+        strike = pd.to_numeric(df['Strike'], errors='coerce')
+        mult = pd.to_numeric(df['Multiplier'], errors='coerce').fillna(1.0)
+        mult = np.where(mult == 0, 1.0, mult)
+        
+        is_long = df['Type'].str.contains('Long', case=False, na=False)
+        midpoints = np.where(is_long, (spot - strike) / mult, (strike - spot) / mult)
+        midpoints = np.maximum(0.0, midpoints)
+        
+        df['Bid'] = np.maximum(0.0, midpoints - 0.01)
+        df['Ask'] = midpoints + 0.01
+
         return df, funding_error
     except Exception as e:
         st.error(f"⚠️ Could not load data from Google Sheets. Error: {e}")
@@ -181,35 +216,6 @@ if not warrants_df.empty:
     if search_code:
         filtered_df = filtered_df[filtered_df['Code'].astype(str).str.contains(search_code, case=False, na=False)]
 
-    # --- DYNAMIC LIVE PRICING (For Search Results) ---
-    # Fetch live prices instantly if the user filters the list, overriding the stale sheet data
-    if search_code or selected_underlying != "-- View All --":
-        unique_tickers = filtered_df['Ticker'].dropna().unique().tolist()
-        if unique_tickers and len(unique_tickers) <= 10: 
-            for ticker in unique_tickers:
-                try:
-                    yf_data = yf.Ticker(ticker).history(period="1d")
-                    if not yf_data.empty:
-                        live_p = float(yf_data['Close'].iloc[-1])
-                        filtered_df.loc[filtered_df['Ticker'] == ticker, 'Underlying Spot Price'] = live_p
-                except:
-                    pass
-
-    # --- DYNAMIC BID/ASK MATH ---
-    spot = pd.to_numeric(filtered_df['Underlying Spot Price'], errors='coerce')
-    strike = pd.to_numeric(filtered_df['Strike'], errors='coerce')
-    mult = pd.to_numeric(filtered_df['Multiplier'], errors='coerce').fillna(1.0)
-    mult = np.where(mult == 0, 1.0, mult)
-    
-    is_long = filtered_df['Type'].str.contains('Long', case=False, na=False)
-    
-    midpoints = np.where(is_long, (spot - strike) / mult, (strike - spot) / mult)
-    midpoints = np.maximum(0.0, midpoints)
-    
-    filtered_df['Bid'] = np.maximum(0.0, midpoints - 0.01)
-    filtered_df['Ask'] = midpoints + 0.01
-
-
     display_cols = ['Code', 'Underlying', 'Type', 'Strike', 'Stop Loss Trigger Level', 'Multiplier']
     
     gearing_col = 'Effective gearing' if 'Effective gearing' in filtered_df.columns else 'Effective Gearing'
@@ -249,16 +255,9 @@ if not warrants_df.empty:
         selected_warrant_code = filtered_df.iloc[selected_index]['Code']
         warrant = warrants_df[warrants_df['Code'] == selected_warrant_code].iloc[0]
         
+        # Spot price is now inherently live from the bulk load
         sheet_price = warrant.get('Underlying Spot Price')
         live_price = float(sheet_price) if pd.notna(sheet_price) else 0.0
-        
-        if pd.notna(warrant['Ticker']):
-            try:
-                yf_data = yf.Ticker(warrant['Ticker']).history(period="1d")
-                if not yf_data.empty:
-                    live_price = float(yf_data['Close'].iloc[-1])
-            except:
-                pass 
 
         strike = float(warrant['Strike']) if pd.notna(warrant['Strike']) else 0.0
         multiplier = float(warrant.get('Multiplier', 1.0)) if pd.notna(warrant.get('Multiplier')) else 1.0
