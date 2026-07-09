@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.18.0"
+VERSION = "1.19.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -99,7 +99,6 @@ def load_warrant_data():
             long_col = [c for c in funding_df.columns if 'Long' in str(c) or 'long' in str(c)][0]
             short_col = [c for c in funding_df.columns if 'Short' in str(c) or 'short' in str(c)][0]
             
-            # Helper to strip percent signs and properly format decimals
             def parse_rate(raw_val):
                 raw_val = str(raw_val).strip()
                 if '%' in raw_val:
@@ -146,7 +145,30 @@ def load_warrant_data():
                 
                 if df[col].dropna().max() <= 10.0:
                     df[col] = df[col] * 100
-                    
+        
+        # --- NEW: THEORETICAL BID/ASK OVERRIDE ---
+        # Ignore CITI's sheet values and mathematically calculate Bid/Ask based on theoretical midpoint
+        if 'Underlying Spot Price' in df.columns and 'Strike' in df.columns:
+            spot = df['Underlying Spot Price']
+            strike = df['Strike']
+            
+            # Use Multiplier if it exists, otherwise default to 1.0
+            mult = df['Multiplier'].fillna(1.0)
+            mult = np.where(mult == 0, 1.0, mult)
+            
+            # Calculate theoretical midpoint based on Long/Short
+            midpoint = np.where(
+                df['Type'].str.contains('Long'),
+                (spot - strike) / mult,
+                (strike - spot) / mult
+            )
+            # Ensure price doesn't go below $0
+            midpoint = np.maximum(0.0, midpoint)
+            
+            # Apply strict 1-cent spread calculation
+            df['Bid'] = np.maximum(0.0, midpoint - 0.01)
+            df['Ask'] = midpoint + 0.01
+
         return df, funding_error
     except Exception as e:
         st.error(f"⚠️ Could not load data from Google Sheets. Error: {e}")
@@ -174,7 +196,6 @@ if not warrants_df.empty:
     </div>
     """, unsafe_allow_html=True)
     
-    # --- SIDE-BY-SIDE SEARCH BARS ---
     search_col1, search_col2 = st.columns(2)
     
     with search_col1:
@@ -219,8 +240,8 @@ if not warrants_df.empty:
             gearing_col: st.column_config.NumberColumn("Effective Gearing", format="%.2f%%", help="The degree of leverage the warrant provides compared to the underlying share."),
             ko_col: st.column_config.NumberColumn("Dist. to Knock-Out", format="%.2f%%", help="The percentage distance between the current spot price and the Strike (financing level)."),
             sl_dist_col: st.column_config.NumberColumn("Distance to Stop", format="%.2f%%", help="The percentage distance between the current spot price and the Stop Loss trigger level."),
-            "Bid": st.column_config.NumberColumn("Bid", format="$%.3f", help="The current highest price a buyer is willing to pay."),
-            "Ask": st.column_config.NumberColumn("Ask", format="$%.3f", help="The current lowest price a seller is willing to accept.")
+            "Bid": st.column_config.NumberColumn("Theoretical Bid", format="$%.3f", help="Calculated as (Midpoint - 1c). Represents pure theoretical value, overriding CITI's sheet."),
+            "Ask": st.column_config.NumberColumn("Theoretical Ask", format="$%.3f", help="Calculated as (Midpoint + 1c). Represents pure theoretical value, overriding CITI's sheet.")
         }
     )
 
@@ -253,7 +274,6 @@ if not warrants_df.empty:
         else:
             current_mini_price = max(0.0, (strike - live_price) / (multiplier * fx_rate))
 
-        # --- BIDIRECTIONAL CALLBACKS FOR RISK / QTY ---
         def update_risk_cb(price):
             st.session_state.risk_input = float(st.session_state.qty_input * price)
 
@@ -265,15 +285,12 @@ if not warrants_df.empty:
                 st.session_state.qty_input = 0
                 st.session_state.risk_input = 0.0
 
-        # Initialize session state for the current warrant (including Base Share Price!)
         if 'current_warrant_code' not in st.session_state or st.session_state.current_warrant_code != warrant['Code']:
             st.session_state.current_warrant_code = warrant['Code']
             st.session_state.qty_input = 200
             st.session_state.risk_input = float(200 * current_mini_price)
-            # Store the live price in session state so user edits don't snap back
             st.session_state.base_price_input = float(round(live_price, 2))
         else:
-            # Sync risk if the spot price refreshed/changed dynamically
             expected_risk = float(st.session_state.qty_input * current_mini_price)
             if not math.isclose(st.session_state.risk_input, expected_risk, rel_tol=1e-5):
                 st.session_state.risk_input = expected_risk
@@ -309,7 +326,6 @@ if not warrants_df.empty:
         in_col1, in_col2, in_col3, in_col4 = st.columns(4)
         
         with in_col1:
-            # Linked to session state to prevent snapping back
             base_share_price = st.number_input("Base Share Price", step=0.10, key="base_price_input", help="The starting share price for the middle 'SPOT' row of the payoff matrix.")
             mini_qty = st.number_input("Mini QTY", step=100, key="qty_input", on_change=update_risk_cb, args=(current_mini_price,), help="The total quantity of MINI warrants purchased. Editing this automatically updates your Max Risk.")
         with in_col2:
@@ -327,7 +343,6 @@ if not warrants_df.empty:
         row_prices = [base_share_price * (1 + (step * (adj_share_pct / 100) / 2)) for step in steps]
         
         dates = [datetime.today() + timedelta(days=i * adj_date_days) for i in range(7)]
-        # Updated to Australian Date Format: DD/MM/YYYY
         date_strs = [d.strftime('%d/%m/%Y') for d in dates]
         
         daily_interest = (strike * funding_rate) / 365
