@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.17.0"
+VERSION = "1.18.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -259,25 +259,24 @@ if not warrants_df.empty:
 
         def update_qty_cb(price):
             if price > 0:
-                # Floor the contracts so we never exceed the typed max risk
                 st.session_state.qty_input = int(math.floor(st.session_state.risk_input / price))
-                # Auto-correct the risk visual to show the actual math for those whole contracts
                 st.session_state.risk_input = float(st.session_state.qty_input * price)
             else:
                 st.session_state.qty_input = 0
                 st.session_state.risk_input = 0.0
 
-        # Initialize session state for the current warrant
+        # Initialize session state for the current warrant (including Base Share Price!)
         if 'current_warrant_code' not in st.session_state or st.session_state.current_warrant_code != warrant['Code']:
             st.session_state.current_warrant_code = warrant['Code']
             st.session_state.qty_input = 200
             st.session_state.risk_input = float(200 * current_mini_price)
+            # Store the live price in session state so user edits don't snap back
+            st.session_state.base_price_input = float(round(live_price, 2))
         else:
             # Sync risk if the spot price refreshed/changed dynamically
             expected_risk = float(st.session_state.qty_input * current_mini_price)
             if not math.isclose(st.session_state.risk_input, expected_risk, rel_tol=1e-5):
                 st.session_state.risk_input = expected_risk
-
 
         st.markdown("<br><br>", unsafe_allow_html=True)
         
@@ -310,8 +309,8 @@ if not warrants_df.empty:
         in_col1, in_col2, in_col3, in_col4 = st.columns(4)
         
         with in_col1:
-            base_share_price = st.number_input("Base Share Price", value=float(round(live_price, 2)), step=0.10, help="The starting share price for the middle 'SPOT' row of the payoff matrix.")
-            # QTY Input mapped to session state
+            # Linked to session state to prevent snapping back
+            base_share_price = st.number_input("Base Share Price", step=0.10, key="base_price_input", help="The starting share price for the middle 'SPOT' row of the payoff matrix.")
             mini_qty = st.number_input("Mini QTY", step=100, key="qty_input", on_change=update_risk_cb, args=(current_mini_price,), help="The total quantity of MINI warrants purchased. Editing this automatically updates your Max Risk.")
         with in_col2:
             adj_share_pct = st.number_input("ADJ Share %", value=2.0, step=1.0, help="The percentage step-size for the share price rows moving up and down the matrix.")
@@ -320,7 +319,6 @@ if not warrants_df.empty:
             calc_type = st.radio("Display Output As:", ["P&L %", "P&L $"], help="Toggle whether the matrix displays profit/loss as a percentage or in absolute dollars.")
         with in_col4:
             funding_rate = st.number_input("Funding Rate (%)", value=float(warrant['Funding Rate']*100), step=0.1, disabled=True, help="The annualized interest rate used to calculate daily financing costs (Auto-updates via Google Sheets).") / 100
-            # RISK Input mapped to session state
             max_risk = st.number_input("Max Risk ($)", step=100.0, key="risk_input", on_change=update_qty_cb, args=(current_mini_price,), help="Type your maximum budget here. The app will automatically calculate the highest whole number of contracts you can buy without exceeding this limit.")
 
         st.markdown("### Payoff Matrix")
@@ -329,7 +327,8 @@ if not warrants_df.empty:
         row_prices = [base_share_price * (1 + (step * (adj_share_pct / 100) / 2)) for step in steps]
         
         dates = [datetime.today() + timedelta(days=i * adj_date_days) for i in range(7)]
-        date_strs = [d.strftime('%m/%d/%Y') for d in dates]
+        # Updated to Australian Date Format: DD/MM/YYYY
+        date_strs = [d.strftime('%d/%m/%Y') for d in dates]
         
         daily_interest = (strike * funding_rate) / 365
         
