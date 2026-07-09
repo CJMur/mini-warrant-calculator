@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.21.0"
+VERSION = "1.22.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -140,7 +140,6 @@ def load_warrant_data():
         unique_tickers = [t for t in df['Ticker'].dropna().unique().tolist() if t]
         if unique_tickers:
             try:
-                # yf.download is highly optimized and multithreaded for bulk fetching
                 live_data = yf.download(unique_tickers, period="1d", progress=False)
                 if 'Close' in live_data:
                     close_data = live_data['Close']
@@ -156,7 +155,7 @@ def load_warrant_data():
                         except:
                             pass
             except Exception as e:
-                pass # Fail silently, will just fall back to sheet's static prices
+                pass 
                 
         # --- GLOBAL DYNAMIC BID/ASK MATH ---
         spot = pd.to_numeric(df['Underlying Spot Price'], errors='coerce')
@@ -255,7 +254,6 @@ if not warrants_df.empty:
         selected_warrant_code = filtered_df.iloc[selected_index]['Code']
         warrant = warrants_df[warrants_df['Code'] == selected_warrant_code].iloc[0]
         
-        # Spot price is now inherently live from the bulk load
         sheet_price = warrant.get('Underlying Spot Price')
         live_price = float(sheet_price) if pd.notna(sheet_price) else 0.0
 
@@ -264,10 +262,25 @@ if not warrants_df.empty:
         fx_rate = float(warrant.get('FX Rate', 1.0))
         stop_loss = float(warrant.get('Stop Loss Trigger Level', 0.0)) if pd.notna(warrant.get('Stop Loss Trigger Level')) else 0.0
 
+        # --- INITIALIZE SESSION STATE FIRST ---
+        # This ensures we capture the Base Price BEFORE calculating the Fair Value
+        if 'current_warrant_code' not in st.session_state or st.session_state.current_warrant_code != warrant['Code']:
+            st.session_state.current_warrant_code = warrant['Code']
+            st.session_state.base_price_input = float(round(live_price, 2))
+            
+            # Initial math just to set the default Risk value
+            init_price = max(0.0, (st.session_state.base_price_input - strike) / (multiplier * fx_rate)) if 'Long' in warrant['Type'] else max(0.0, (strike - st.session_state.base_price_input) / (multiplier * fx_rate))
+            st.session_state.qty_input = 200
+            st.session_state.risk_input = float(200 * init_price)
+            
+        # --- DYNAMIC FAIR VALUE CALCULATION ---
+        # Now uses the user's editable Base Share Price to calculate Fair Value
+        dynamic_base_price = st.session_state.base_price_input
+        
         if 'Long' in warrant['Type']:
-            current_mini_price = max(0.0, (live_price - strike) / (multiplier * fx_rate))
+            current_mini_price = max(0.0, (dynamic_base_price - strike) / (multiplier * fx_rate))
         else:
-            current_mini_price = max(0.0, (strike - live_price) / (multiplier * fx_rate))
+            current_mini_price = max(0.0, (strike - dynamic_base_price) / (multiplier * fx_rate))
 
         def update_risk_cb(price):
             st.session_state.risk_input = float(st.session_state.qty_input * price)
@@ -280,15 +293,10 @@ if not warrants_df.empty:
                 st.session_state.qty_input = 0
                 st.session_state.risk_input = 0.0
 
-        if 'current_warrant_code' not in st.session_state or st.session_state.current_warrant_code != warrant['Code']:
-            st.session_state.current_warrant_code = warrant['Code']
-            st.session_state.qty_input = 200
-            st.session_state.risk_input = float(200 * current_mini_price)
-            st.session_state.base_price_input = float(round(live_price, 2))
-        else:
-            expected_risk = float(st.session_state.qty_input * current_mini_price)
-            if not math.isclose(st.session_state.risk_input, expected_risk, rel_tol=1e-5):
-                st.session_state.risk_input = expected_risk
+        # Sync risk if the spot price refreshed OR if the user manually changed the Base Share Price
+        expected_risk = float(st.session_state.qty_input * current_mini_price)
+        if not math.isclose(st.session_state.risk_input, expected_risk, rel_tol=1e-5):
+            st.session_state.risk_input = expected_risk
 
         st.markdown("<br><br>", unsafe_allow_html=True)
         
@@ -313,7 +321,8 @@ if not warrants_df.empty:
         i_col2.metric("Multiplier", int(multiplier))
         i_col3.metric("Strike", f"${strike:.4f}")
         i_col4.metric("Stop Loss", f"${stop_loss:.2f}")
-        i_col5.metric("Current Fair Value", f"${current_mini_price:.2f}")
+        # Display the dynamic fair value
+        i_col5.metric("Current Fair Value", f"${current_mini_price:.2f}", help="The theoretical current price of the warrant based on your chosen Base Share Price.")
         
         st.divider()
 
