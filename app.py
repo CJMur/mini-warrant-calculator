@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.22.0"
+VERSION = "1.23.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -109,11 +109,34 @@ def load_warrant_data():
 
         df = pd.read_csv(SHEET_CSV_URL)
         
+        # --- NEW: YAHOO FINANCE TRANSLATION DICTIONARY ---
         def get_ticker(code):
-            if isinstance(code, str) and len(code) >= 3:
-                if code.startswith('FX'): return None 
-                return code[:3] + '.AX'
-            return None
+            if not isinstance(code, str) or len(code) < 3:
+                return None
+            if code.startswith('FX'): 
+                return None 
+                
+            prefix = code[:3].upper()
+            
+            # Map CITI's index/commodity codes to Yahoo's specific tickers
+            special_tickers = {
+                'XJO': '^AXJO',   # ASX 200
+                'SPF': '^GSPC',   # S&P 500
+                'NDX': '^NDX',    # Nasdaq 100
+                'DJX': '^DJI',    # Dow Jones
+                'RTY': '^RUT',    # Russell 2000
+                'NI2': '^N225',   # Nikkei 225
+                'ZGC': 'GC=F',    # Gold
+                'ZSI': 'SI=F',    # Silver
+                'ZCL': 'CL=F',    # Crude Oil WTI
+                'ZHG': 'HG=F'     # Copper
+            }
+            
+            if prefix in special_tickers:
+                return special_tickers[prefix]
+                
+            # Default for all other standard ASX stocks
+            return prefix + '.AX'
             
         df['Ticker'] = df['Code'].apply(get_ticker)
         df['Funding Rate'] = np.where(df['Type'] == 'MINI Long', default_long_rate, default_short_rate)
@@ -254,6 +277,7 @@ if not warrants_df.empty:
         selected_warrant_code = filtered_df.iloc[selected_index]['Code']
         warrant = warrants_df[warrants_df['Code'] == selected_warrant_code].iloc[0]
         
+        # Spot price is now inherently live from the bulk load
         sheet_price = warrant.get('Underlying Spot Price')
         live_price = float(sheet_price) if pd.notna(sheet_price) else 0.0
 
@@ -263,18 +287,15 @@ if not warrants_df.empty:
         stop_loss = float(warrant.get('Stop Loss Trigger Level', 0.0)) if pd.notna(warrant.get('Stop Loss Trigger Level')) else 0.0
 
         # --- INITIALIZE SESSION STATE FIRST ---
-        # This ensures we capture the Base Price BEFORE calculating the Fair Value
         if 'current_warrant_code' not in st.session_state or st.session_state.current_warrant_code != warrant['Code']:
             st.session_state.current_warrant_code = warrant['Code']
             st.session_state.base_price_input = float(round(live_price, 2))
             
-            # Initial math just to set the default Risk value
             init_price = max(0.0, (st.session_state.base_price_input - strike) / (multiplier * fx_rate)) if 'Long' in warrant['Type'] else max(0.0, (strike - st.session_state.base_price_input) / (multiplier * fx_rate))
             st.session_state.qty_input = 200
             st.session_state.risk_input = float(200 * init_price)
             
         # --- DYNAMIC FAIR VALUE CALCULATION ---
-        # Now uses the user's editable Base Share Price to calculate Fair Value
         dynamic_base_price = st.session_state.base_price_input
         
         if 'Long' in warrant['Type']:
@@ -293,7 +314,6 @@ if not warrants_df.empty:
                 st.session_state.qty_input = 0
                 st.session_state.risk_input = 0.0
 
-        # Sync risk if the spot price refreshed OR if the user manually changed the Base Share Price
         expected_risk = float(st.session_state.qty_input * current_mini_price)
         if not math.isclose(st.session_state.risk_input, expected_risk, rel_tol=1e-5):
             st.session_state.risk_input = expected_risk
@@ -321,7 +341,6 @@ if not warrants_df.empty:
         i_col2.metric("Multiplier", int(multiplier))
         i_col3.metric("Strike", f"${strike:.4f}")
         i_col4.metric("Stop Loss", f"${stop_loss:.2f}")
-        # Display the dynamic fair value
         i_col5.metric("Current Fair Value", f"${current_mini_price:.2f}", help="The theoretical current price of the warrant based on your chosen Base Share Price.")
         
         st.divider()
