@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.24.0"
+VERSION = "1.25.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -149,7 +149,6 @@ def load_warrant_data():
         
         for col in cols_to_clean:
             if col in df.columns: 
-                # THE FIX: Strip commas and dollar signs before forcing to numeric
                 df[col] = df[col].astype(str).str.replace(',', '', regex=False).str.replace('$', '', regex=False)
                 df[col] = pd.to_numeric(df[col], errors='coerce')
                 
@@ -187,7 +186,9 @@ def load_warrant_data():
         mult = np.where(mult == 0, 1.0, mult)
         
         is_long = df['Type'].str.contains('Long', case=False, na=False)
-        midpoints = np.where(is_long, (spot - strike) / mult, (strike - spot) / mult)
+        
+        # THE FIX: Swapped division (/) for multiplication (*)
+        midpoints = np.where(is_long, (spot - strike) * mult, (strike - spot) * mult)
         midpoints = np.maximum(0.0, midpoints)
         
         df['Bid'] = np.maximum(0.0, midpoints - 0.01)
@@ -290,17 +291,23 @@ if not warrants_df.empty:
             st.session_state.current_warrant_code = warrant['Code']
             st.session_state.base_price_input = float(round(live_price, 2))
             
-            init_price = max(0.0, (st.session_state.base_price_input - strike) / (multiplier * fx_rate)) if 'Long' in warrant['Type'] else max(0.0, (strike - st.session_state.base_price_input) / (multiplier * fx_rate))
+            # THE FIX: Swapped division (/) for multiplication (*)
+            if 'Long' in warrant['Type']:
+                init_price = max(0.0, (st.session_state.base_price_input - strike) * multiplier / fx_rate)
+            else:
+                init_price = max(0.0, (strike - st.session_state.base_price_input) * multiplier / fx_rate)
+                
             st.session_state.qty_input = 200
             st.session_state.risk_input = float(200 * init_price)
             
         # --- DYNAMIC FAIR VALUE CALCULATION ---
         dynamic_base_price = st.session_state.base_price_input
         
+        # THE FIX: Swapped division (/) for multiplication (*)
         if 'Long' in warrant['Type']:
-            current_mini_price = max(0.0, (dynamic_base_price - strike) / (multiplier * fx_rate))
+            current_mini_price = max(0.0, (dynamic_base_price - strike) * multiplier / fx_rate)
         else:
-            current_mini_price = max(0.0, (strike - dynamic_base_price) / (multiplier * fx_rate))
+            current_mini_price = max(0.0, (strike - dynamic_base_price) * multiplier / fx_rate)
 
         def update_risk_cb(price):
             st.session_state.risk_input = float(st.session_state.qty_input * price)
@@ -337,7 +344,6 @@ if not warrants_df.empty:
             
         i_col1, i_col2, i_col3, i_col4, i_col5 = st.columns(5)
         i_col1.metric("Selected Code", warrant['Code'])
-        # THE FIX: Show natural format, removing the forced integer conversion
         i_col2.metric("Multiplier", f"{multiplier:g}")
         i_col3.metric("Strike", f"${strike:.4f}")
         i_col4.metric("Stop Loss", f"${stop_loss:.2f}")
@@ -381,10 +387,11 @@ if not warrants_df.empty:
                 
                 adj_strike = strike + (daily_interest * days_passed)
                 
+                # THE FIX: Swapped division (/) for multiplication (*)
                 if 'Long' in warrant['Type']:
-                    mini_val = max(0.0, (price - adj_strike) / (multiplier * fx_rate))
+                    mini_val = max(0.0, (price - adj_strike) * multiplier / fx_rate)
                 else:
-                    mini_val = max(0.0, (adj_strike - price) / (multiplier * fx_rate))
+                    mini_val = max(0.0, (adj_strike - price) * multiplier / fx_rate)
                 
                 if current_mini_price > 0:
                     if calc_type == "P&L %":
