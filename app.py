@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.23.0"
+VERSION = "1.24.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -109,7 +109,6 @@ def load_warrant_data():
 
         df = pd.read_csv(SHEET_CSV_URL)
         
-        # --- NEW: YAHOO FINANCE TRANSLATION DICTIONARY ---
         def get_ticker(code):
             if not isinstance(code, str) or len(code) < 3:
                 return None
@@ -118,24 +117,22 @@ def load_warrant_data():
                 
             prefix = code[:3].upper()
             
-            # Map CITI's index/commodity codes to Yahoo's specific tickers
             special_tickers = {
-                'XJO': '^AXJO',   # ASX 200
-                'SPF': '^GSPC',   # S&P 500
-                'NDX': '^NDX',    # Nasdaq 100
-                'DJX': '^DJI',    # Dow Jones
-                'RTY': '^RUT',    # Russell 2000
-                'NI2': '^N225',   # Nikkei 225
-                'ZGC': 'GC=F',    # Gold
-                'ZSI': 'SI=F',    # Silver
-                'ZCL': 'CL=F',    # Crude Oil WTI
-                'ZHG': 'HG=F'     # Copper
+                'XJO': '^AXJO',   
+                'SPF': '^GSPC',   
+                'NDX': '^NDX',    
+                'DJX': '^DJI',    
+                'RTY': '^RUT',    
+                'NI2': '^N225',   
+                'ZGC': 'GC=F',    
+                'ZSI': 'SI=F',    
+                'ZCL': 'CL=F',    
+                'ZHG': 'HG=F'     
             }
             
             if prefix in special_tickers:
                 return special_tickers[prefix]
                 
-            # Default for all other standard ASX stocks
             return prefix + '.AX'
             
         df['Ticker'] = df['Code'].apply(get_ticker)
@@ -151,7 +148,10 @@ def load_warrant_data():
         pct_cols_to_clean = ['Effective gearing', 'Effective Gearing', 'Distance to Knock-Out', 'Distance to Stop Loss']
         
         for col in cols_to_clean:
-            if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce')
+            if col in df.columns: 
+                # THE FIX: Strip commas and dollar signs before forcing to numeric
+                df[col] = df[col].astype(str).str.replace(',', '', regex=False).str.replace('$', '', regex=False)
+                df[col] = pd.to_numeric(df[col], errors='coerce')
                 
         for col in pct_cols_to_clean:
             if col in df.columns:
@@ -277,7 +277,6 @@ if not warrants_df.empty:
         selected_warrant_code = filtered_df.iloc[selected_index]['Code']
         warrant = warrants_df[warrants_df['Code'] == selected_warrant_code].iloc[0]
         
-        # Spot price is now inherently live from the bulk load
         sheet_price = warrant.get('Underlying Spot Price')
         live_price = float(sheet_price) if pd.notna(sheet_price) else 0.0
 
@@ -338,7 +337,8 @@ if not warrants_df.empty:
             
         i_col1, i_col2, i_col3, i_col4, i_col5 = st.columns(5)
         i_col1.metric("Selected Code", warrant['Code'])
-        i_col2.metric("Multiplier", int(multiplier))
+        # THE FIX: Show natural format, removing the forced integer conversion
+        i_col2.metric("Multiplier", f"{multiplier:g}")
         i_col3.metric("Strike", f"${strike:.4f}")
         i_col4.metric("Stop Loss", f"${stop_loss:.2f}")
         i_col5.metric("Current Fair Value", f"${current_mini_price:.2f}", help="The theoretical current price of the warrant based on your chosen Base Share Price.")
