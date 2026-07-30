@@ -8,24 +8,18 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.27.0"
+VERSION = "1.28.0"
 
 # --- CSS STYLING ---
 st.markdown("""
 <style>
     /* --- WHITE-LABEL INVISIBILITY CLOAK --- */
-    /* Explicitly force the header and menu to be visible and sit on top of the UI */
-    header { visibility: visible !important; z-index: 9999 !important; }
-    [data-testid="stHeader"] { visibility: visible !important; z-index: 9999 !important; }
-    [data-testid="stToolbar"] { visibility: visible !important; z-index: 9999 !important; }
-    #MainMenu { visibility: visible !important; }
-    
+    /* Removed all header/toolbar visibility CSS to let Streamlit's native menu appear naturally */
     footer {visibility: hidden;}
     div[class^="viewerBadge_container"] {display: none !important;}
     [data-testid="stDecoration"] {display: none !important;}
 
-    /* Increased top padding slightly so the app content doesn't cover the top-right menu */
-    .block-container { padding-top: 3.5rem !important; padding-bottom: 5rem !important; }
+    .block-container { padding-top: 2rem !important; padding-bottom: 5rem !important; }
     
     /* Overall Font Size Increases */
     p, span, label, div[data-testid="stMarkdownContainer"] {
@@ -38,29 +32,29 @@ st.markdown("""
     [data-testid="stMetricLabel"] {
         font-size: 1.1rem !important;
         font-weight: 600;
-        color: var(--text-color);
         opacity: 0.7;
     }
 
-    /* THEME-AWARE HEADER BOXES */
+    /* MATCH OPTIONS CALCULATOR HEADER */
     .header-box {
         padding: 1.5rem; 
-        background-color: var(--secondary-background-color); 
+        background-color: #0e1b32; /* Hardcoded rich dark navy */
         border-radius: 10px; 
-        color: var(--text-color);
+        color: #ffffff; /* Hardcoded pure white text */
         margin-bottom: 20px; 
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        border-bottom: 4px solid #1DBFD2;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+        border-bottom: 4px solid #1DBFD2; /* Cyan accent border */
     }
-    .header-title { font-size: 28px; font-weight: 700; margin: 0; }
-    .header-sub { font-size: 16px; opacity: 0.8; margin: 0; }
+    .header-title { font-size: 28px; font-weight: 700; margin: 0; color: #ffffff; }
+    .header-sub { font-size: 16px; opacity: 0.8; margin: 0; color: #ffffff; }
     .status-tag {
-        background-color: var(--background-color); 
+        background-color: rgba(255,255,255,0.15); 
         padding: 4px 10px; 
         border-radius: 4px;
         font-size: 14px; 
         font-family: monospace;
-        border: 1px solid var(--text-color);
+        border: none;
+        color: #ffffff;
     }
     
     div[data-testid="stButton"] button[kind="primary"] {
