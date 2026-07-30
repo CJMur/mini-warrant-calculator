@@ -8,18 +8,24 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.26.0"
+VERSION = "1.27.0"
 
 # --- CSS STYLING ---
 st.markdown("""
 <style>
     /* --- WHITE-LABEL INVISIBILITY CLOAK --- */
-    /* MainMenu and header are no longer hidden so users can access Settings for Light/Dark mode */
+    /* Explicitly force the header and menu to be visible and sit on top of the UI */
+    header { visibility: visible !important; z-index: 9999 !important; }
+    [data-testid="stHeader"] { visibility: visible !important; z-index: 9999 !important; }
+    [data-testid="stToolbar"] { visibility: visible !important; z-index: 9999 !important; }
+    #MainMenu { visibility: visible !important; }
+    
     footer {visibility: hidden;}
     div[class^="viewerBadge_container"] {display: none !important;}
     [data-testid="stDecoration"] {display: none !important;}
 
-    .block-container { padding-top: 2rem !important; padding-bottom: 5rem !important; }
+    /* Increased top padding slightly so the app content doesn't cover the top-right menu */
+    .block-container { padding-top: 3.5rem !important; padding-bottom: 5rem !important; }
     
     /* Overall Font Size Increases */
     p, span, label, div[data-testid="stMarkdownContainer"] {
