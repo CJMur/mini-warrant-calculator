@@ -8,14 +8,13 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.25.0"
+VERSION = "1.26.0"
 
 # --- CSS STYLING ---
 st.markdown("""
 <style>
     /* --- WHITE-LABEL INVISIBILITY CLOAK --- */
-    #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
+    /* MainMenu and header are no longer hidden so users can access Settings for Light/Dark mode */
     footer {visibility: hidden;}
     div[class^="viewerBadge_container"] {display: none !important;}
     [data-testid="stDecoration"] {display: none !important;}
@@ -33,19 +32,29 @@ st.markdown("""
     [data-testid="stMetricLabel"] {
         font-size: 1.1rem !important;
         font-weight: 600;
-        color: #94a3b8;
+        color: var(--text-color);
+        opacity: 0.7;
     }
 
+    /* THEME-AWARE HEADER BOXES */
     .header-box {
-        padding: 1.5rem; background-color: #0e1b32; border-radius: 10px; color: white;
-        margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        padding: 1.5rem; 
+        background-color: var(--secondary-background-color); 
+        border-radius: 10px; 
+        color: var(--text-color);
+        margin-bottom: 20px; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         border-bottom: 4px solid #1DBFD2;
     }
     .header-title { font-size: 28px; font-weight: 700; margin: 0; }
     .header-sub { font-size: 16px; opacity: 0.8; margin: 0; }
     .status-tag {
-        background-color: rgba(255,255,255,0.15); padding: 4px 10px; border-radius: 4px;
-        font-size: 14px; font-family: monospace;
+        background-color: var(--background-color); 
+        padding: 4px 10px; 
+        border-radius: 4px;
+        font-size: 14px; 
+        font-family: monospace;
+        border: 1px solid var(--text-color);
     }
     
     div[data-testid="stButton"] button[kind="primary"] {
@@ -186,8 +195,6 @@ def load_warrant_data():
         mult = np.where(mult == 0, 1.0, mult)
         
         is_long = df['Type'].str.contains('Long', case=False, na=False)
-        
-        # THE FIX: Swapped division (/) for multiplication (*)
         midpoints = np.where(is_long, (spot - strike) * mult, (strike - spot) * mult)
         midpoints = np.maximum(0.0, midpoints)
         
@@ -286,12 +293,10 @@ if not warrants_df.empty:
         fx_rate = float(warrant.get('FX Rate', 1.0))
         stop_loss = float(warrant.get('Stop Loss Trigger Level', 0.0)) if pd.notna(warrant.get('Stop Loss Trigger Level')) else 0.0
 
-        # --- INITIALIZE SESSION STATE FIRST ---
         if 'current_warrant_code' not in st.session_state or st.session_state.current_warrant_code != warrant['Code']:
             st.session_state.current_warrant_code = warrant['Code']
             st.session_state.base_price_input = float(round(live_price, 2))
             
-            # THE FIX: Swapped division (/) for multiplication (*)
             if 'Long' in warrant['Type']:
                 init_price = max(0.0, (st.session_state.base_price_input - strike) * multiplier / fx_rate)
             else:
@@ -300,10 +305,8 @@ if not warrants_df.empty:
             st.session_state.qty_input = 200
             st.session_state.risk_input = float(200 * init_price)
             
-        # --- DYNAMIC FAIR VALUE CALCULATION ---
         dynamic_base_price = st.session_state.base_price_input
         
-        # THE FIX: Swapped division (/) for multiplication (*)
         if 'Long' in warrant['Type']:
             current_mini_price = max(0.0, (dynamic_base_price - strike) * multiplier / fx_rate)
         else:
@@ -387,7 +390,6 @@ if not warrants_df.empty:
                 
                 adj_strike = strike + (daily_interest * days_passed)
                 
-                # THE FIX: Swapped division (/) for multiplication (*)
                 if 'Long' in warrant['Type']:
                     mini_val = max(0.0, (price - adj_strike) * multiplier / fx_rate)
                 else:
