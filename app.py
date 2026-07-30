@@ -8,53 +8,26 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.28.0"
+VERSION = "1.29.0"
 
 # --- CSS STYLING ---
 st.markdown("""
 <style>
-    /* --- WHITE-LABEL INVISIBILITY CLOAK --- */
-    /* Removed all header/toolbar visibility CSS to let Streamlit's native menu appear naturally */
-    footer {visibility: hidden;}
     div[class^="viewerBadge_container"] {display: none !important;}
     [data-testid="stDecoration"] {display: none !important;}
 
     .block-container { padding-top: 2rem !important; padding-bottom: 5rem !important; }
     
-    /* Overall Font Size Increases */
-    p, span, label, div[data-testid="stMarkdownContainer"] {
-        font-size: 16px;
-    }
-    
-    [data-testid="stMetricValue"] {
-        font-size: 2.2rem !important;
-    }
-    [data-testid="stMetricLabel"] {
-        font-size: 1.1rem !important;
-        font-weight: 600;
-        opacity: 0.7;
-    }
-
-    /* MATCH OPTIONS CALCULATOR HEADER */
     .header-box {
-        padding: 1.5rem; 
-        background-color: #0e1b32; /* Hardcoded rich dark navy */
-        border-radius: 10px; 
-        color: #ffffff; /* Hardcoded pure white text */
-        margin-bottom: 20px; 
-        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
-        border-bottom: 4px solid #1DBFD2; /* Cyan accent border */
+        padding: 1.5rem; background-color: #0e1b32; border-radius: 10px; color: white;
+        margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        border-bottom: 4px solid #1DBFD2;
     }
-    .header-title { font-size: 28px; font-weight: 700; margin: 0; color: #ffffff; }
-    .header-sub { font-size: 16px; opacity: 0.8; margin: 0; color: #ffffff; }
+    .header-title { font-size: 24px; font-weight: 700; margin: 0; color: white;}
+    .header-sub { font-size: 14px; opacity: 0.8; margin: 0; color: white;}
     .status-tag {
-        background-color: rgba(255,255,255,0.15); 
-        padding: 4px 10px; 
-        border-radius: 4px;
-        font-size: 14px; 
-        font-family: monospace;
-        border: none;
-        color: #ffffff;
+        background-color: rgba(255,255,255,0.15); padding: 4px 10px; border-radius: 4px;
+        font-size: 12px; font-family: monospace; color: white;
     }
     
     div[data-testid="stButton"] button[kind="primary"] {
@@ -71,7 +44,7 @@ st.markdown("""
     div[data-baseweb="slider"] > div > div > div { background-color: #0050FF !important; }
     div[role="slider"] { background-color: #0050FF !important; border: none !important; box-shadow: none !important; }
     div[data-testid="stSlider"] svg path { fill: #0050FF !important; stroke: #0050FF !important; }
-    div[data-testid="stSlider"] p { color: white !important; }
+    div[data-testid="stSlider"] p { color: var(--text-color) !important; }
     input[type=range] { accent-color: #0050FF !important; }
     
     /* Dataframe Row Selection Highlight (Teal) */
@@ -219,10 +192,10 @@ if not warrants_df.empty:
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <div>
                 <div class="header-title">MINI Warrant Search</div>
-                <div class="header-sub">Click a row below to select a warrant and load the calculator</div>
+                <div class="header-sub">Click a row below to select a warrant and load the calculator v{VERSION}</div>
             </div>
             <div style="text-align: right;">
-                <span class="status-tag">v{VERSION}</span>
+                <span class="status-tag">Search & Analyze</span>
             </div>
         </div>
     </div>
