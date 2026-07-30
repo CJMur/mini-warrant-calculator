@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.29.0"
+VERSION = "1.30.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -192,10 +192,10 @@ if not warrants_df.empty:
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <div>
                 <div class="header-title">MINI Warrant Search</div>
-                <div class="header-sub">Click a row below to select a warrant and load the calculator v{VERSION}</div>
+                <div class="header-sub">Click a row below to select a warrant</div>
             </div>
             <div style="text-align: right;">
-                <span class="status-tag">Search & Analyze</span>
+                <span class="status-tag">Search & Analyze v{VERSION}</span>
             </div>
         </div>
     </div>
