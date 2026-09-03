@@ -8,14 +8,11 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.30.0"
+VERSION = "1.32.0"
 
 # --- CSS STYLING ---
 st.markdown("""
 <style>
-    div[class^="viewerBadge_container"] {display: none !important;}
-    [data-testid="stDecoration"] {display: none !important;}
-
     .block-container { padding-top: 2rem !important; padding-bottom: 5rem !important; }
     
     .header-box {
@@ -25,9 +22,16 @@ st.markdown("""
     }
     .header-title { font-size: 24px; font-weight: 700; margin: 0; color: white;}
     .header-sub { font-size: 14px; opacity: 0.8; margin: 0; color: white;}
-    .status-tag {
-        background-color: rgba(255,255,255,0.15); padding: 4px 10px; border-radius: 4px;
-        font-size: 12px; font-family: monospace; color: white;
+    
+    .mock-button {
+        background-color: #1e293b; 
+        color: #f8fafc; 
+        padding: 6px 14px; 
+        border-radius: 6px; 
+        font-size: 14px; 
+        font-weight: 600; 
+        border: 1px solid #334155;
+        display: inline-block;
     }
     
     div[data-testid="stButton"] button[kind="primary"] {
@@ -119,7 +123,20 @@ def load_warrant_data():
             
         df['Ticker'] = df['Code'].apply(get_ticker)
         df['Funding Rate'] = np.where(df['Type'] == 'MINI Long', default_long_rate, default_short_rate)
+        
+        # --- NEW: LIVE FX RATE CONVERSION FOR USD UNDERLYINGS ---
+        live_aud_usd = 1.0
+        try:
+            fx_data = yf.Ticker("AUDUSD=X").history(period="1d")
+            if not fx_data.empty:
+                live_aud_usd = float(fx_data['Close'].iloc[-1])
+        except:
+            pass
+            
         df['FX Rate'] = 1.0
+        usd_prefixes = ['ZHG', 'ZCL', 'DJX', 'ZGC', 'NDX', 'SPF', 'ZSI', 'RTY']
+        mask_usd = df['Code'].astype(str).str.upper().str[:3].isin(usd_prefixes)
+        df.loc[mask_usd, 'FX Rate'] = live_aud_usd
         
         df['Type'] = df['Type'].replace({
             'MINI Long': '🟩 MINI Long ▲', 
@@ -167,9 +184,15 @@ def load_warrant_data():
         mult = pd.to_numeric(df['Multiplier'], errors='coerce').fillna(1.0)
         mult = np.where(mult == 0, 1.0, mult)
         
+        fx = pd.to_numeric(df['FX Rate'], errors='coerce').fillna(1.0)
+        fx = np.where(fx == 0, 1.0, fx)
+        
         is_long = df['Type'].str.contains('Long', case=False, na=False)
         midpoints = np.where(is_long, (spot - strike) * mult, (strike - spot) * mult)
         midpoints = np.maximum(0.0, midpoints)
+        
+        # Apply the FX conversion down to AUD
+        midpoints = midpoints / fx
         
         df['Bid'] = np.maximum(0.0, midpoints - 0.01)
         df['Ask'] = midpoints + 0.01
@@ -195,7 +218,7 @@ if not warrants_df.empty:
                 <div class="header-sub">Click a row below to select a warrant</div>
             </div>
             <div style="text-align: right;">
-                <span class="status-tag">Search & Analyze v{VERSION}</span>
+                <span class="mock-button">Search & Analyze v{VERSION}</span>
             </div>
         </div>
     </div>
@@ -312,7 +335,7 @@ if not warrants_df.empty:
                 <div style="text-align: right;">
                     <div class="header-title" style="color: #4ade80;">${live_price:.2f}</div>
                     <div class="header-sub">Current Underlying Spot</div>
-                    <span class="status-tag">{warrant['Code']}</span>
+                    <span class="mock-button" style="margin-top: 5px;">{warrant['Code']}</span>
                 </div>
             </div>
         </div>
