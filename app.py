@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.32.0"
+VERSION = "1.33.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -124,19 +124,41 @@ def load_warrant_data():
         df['Ticker'] = df['Code'].apply(get_ticker)
         df['Funding Rate'] = np.where(df['Type'] == 'MINI Long', default_long_rate, default_short_rate)
         
-        # --- NEW: LIVE FX RATE CONVERSION FOR USD UNDERLYINGS ---
-        live_aud_usd = 1.0
+        # --- NEW: COMPREHENSIVE LIVE FX RATE CONVERSION ---
+        # Fetching precise "To-AUD" multipliers
+        fx_tickers = ['USDAUD=X', 'JPYAUD=X', 'EURAUD=X', 'GBPAUD=X', 'NZDAUD=X']
+        fx_rates = {t: 1.0 for t in fx_tickers}
+        
         try:
-            fx_data = yf.Ticker("AUDUSD=X").history(period="1d")
-            if not fx_data.empty:
-                live_aud_usd = float(fx_data['Close'].iloc[-1])
+            fx_data = yf.download(fx_tickers, period="1d", progress=False)
+            if 'Close' in fx_data:
+                for ticker in fx_tickers:
+                    try:
+                        val = float(fx_data['Close'].iloc[-1]) if len(fx_tickers) == 1 else float(fx_data['Close'][ticker].iloc[-1])
+                        if pd.notna(val):
+                            fx_rates[ticker] = val
+                    except:
+                        pass
         except:
             pass
             
         df['FX Rate'] = 1.0
-        usd_prefixes = ['ZHG', 'ZCL', 'DJX', 'ZGC', 'NDX', 'SPF', 'ZSI', 'RTY']
-        mask_usd = df['Code'].astype(str).str.upper().str[:3].isin(usd_prefixes)
-        df.loc[mask_usd, 'FX Rate'] = live_aud_usd
+        
+        # 1. USD Underlyings
+        usd_assets = [
+            'Copper Future', 'Crude Oil Future', 'Dow Jones Future', 
+            'Gold Future', 'Nasdaq Future', 'S&P 500 Future', 
+            'Silver Future', 'Russell 2000 Future', 'AUD-USD FX Currency Pair'
+        ]
+        df.loc[df['Underlying'].isin(usd_assets), 'FX Rate'] = fx_rates['USDAUD=X']
+        
+        # 2. JPY Underlyings
+        df.loc[df['Underlying'].isin(['Nikkei Future', 'AUD-JPY FX Currency Pair']), 'FX Rate'] = fx_rates['JPYAUD=X']
+        
+        # 3. EUR, GBP, NZD Underlyings
+        df.loc[df['Underlying'] == 'AUD-EUR FX Currency Pair', 'FX Rate'] = fx_rates['EURAUD=X']
+        df.loc[df['Underlying'] == 'AUD-GBP FX Currency Pair', 'FX Rate'] = fx_rates['GBPAUD=X']
+        df.loc[df['Underlying'] == 'AUD-NZD FX Currency Pair', 'FX Rate'] = fx_rates['NZDAUD=X']
         
         df['Type'] = df['Type'].replace({
             'MINI Long': '🟩 MINI Long ▲', 
@@ -191,8 +213,8 @@ def load_warrant_data():
         midpoints = np.where(is_long, (spot - strike) * mult, (strike - spot) * mult)
         midpoints = np.maximum(0.0, midpoints)
         
-        # Apply the FX conversion down to AUD
-        midpoints = midpoints / fx
+        # Apply the FX conversion (Multiplying to convert to AUD)
+        midpoints = midpoints * fx
         
         df['Bid'] = np.maximum(0.0, midpoints - 0.01)
         df['Ask'] = midpoints + 0.01
@@ -294,9 +316,9 @@ if not warrants_df.empty:
             st.session_state.base_price_input = float(round(live_price, 2))
             
             if 'Long' in warrant['Type']:
-                init_price = max(0.0, (st.session_state.base_price_input - strike) * multiplier / fx_rate)
+                init_price = max(0.0, (st.session_state.base_price_input - strike) * multiplier * fx_rate)
             else:
-                init_price = max(0.0, (strike - st.session_state.base_price_input) * multiplier / fx_rate)
+                init_price = max(0.0, (strike - st.session_state.base_price_input) * multiplier * fx_rate)
                 
             st.session_state.qty_input = 200
             st.session_state.risk_input = float(200 * init_price)
@@ -304,9 +326,9 @@ if not warrants_df.empty:
         dynamic_base_price = st.session_state.base_price_input
         
         if 'Long' in warrant['Type']:
-            current_mini_price = max(0.0, (dynamic_base_price - strike) * multiplier / fx_rate)
+            current_mini_price = max(0.0, (dynamic_base_price - strike) * multiplier * fx_rate)
         else:
-            current_mini_price = max(0.0, (strike - dynamic_base_price) * multiplier / fx_rate)
+            current_mini_price = max(0.0, (strike - dynamic_base_price) * multiplier * fx_rate)
 
         def update_risk_cb(price):
             st.session_state.risk_input = float(st.session_state.qty_input * price)
@@ -387,9 +409,9 @@ if not warrants_df.empty:
                 adj_strike = strike + (daily_interest * days_passed)
                 
                 if 'Long' in warrant['Type']:
-                    mini_val = max(0.0, (price - adj_strike) * multiplier / fx_rate)
+                    mini_val = max(0.0, (price - adj_strike) * multiplier * fx_rate)
                 else:
-                    mini_val = max(0.0, (adj_strike - price) * multiplier / fx_rate)
+                    mini_val = max(0.0, (adj_strike - price) * multiplier * fx_rate)
                 
                 if current_mini_price > 0:
                     if calc_type == "P&L %":
