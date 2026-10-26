@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="MINI Warrant Calculator", layout="wide")
 
 # --- VERSION CONTROL ---
-VERSION = "1.33.0"
+VERSION = "1.34.0"
 
 # --- CSS STYLING ---
 st.markdown("""
@@ -73,23 +73,30 @@ FUNDING_CSV_URL = "https://docs.google.com/spreadsheets/d/1ui3weG176qBJt9gVX1NFp
 @st.cache_data(ttl=600) 
 def load_warrant_data():
     funding_error = None
+    data_warnings = []
     default_long_rate = 0.087
     default_short_rate = -0.015
-    
+
     try:
         try:
             funding_df = pd.read_csv(FUNDING_CSV_URL)
             long_col = [c for c in funding_df.columns if 'Long' in str(c) or 'long' in str(c)][0]
             short_col = [c for c in funding_df.columns if 'Short' in str(c) or 'short' in str(c)][0]
-            
+
             def parse_rate(raw_val):
-                raw_val = str(raw_val).strip()
+                # "8.70%" -> 0.087. Plain numbers: anything under 0.25 is read as a decimal
+                # (0.087 = 8.7%), anything larger as a percentage number (8.7 = 8.7%, 0.4 = 0.4%).
+                raw_val = str(raw_val).strip().replace(',', '')
                 if '%' in raw_val: return float(raw_val.replace('%', '')) / 100.0
                 val = float(raw_val)
-                return val / 100.0 if abs(val) > 0.5 else val
-                
+                return val if abs(val) < 0.25 else val / 100.0
+
             default_long_rate = parse_rate(funding_df[long_col].iloc[0])
             default_short_rate = parse_rate(funding_df[short_col].iloc[0])
+
+            for label, rate in [("Long", default_long_rate), ("Short", default_short_rate)]:
+                if not -0.20 <= rate <= 0.30:
+                    data_warnings.append(f"The {label} funding rate read from the Funding tab is {rate*100:.2f}%, which looks wrong. Check the value in the sheet.")
         except Exception as e:
             funding_error = str(e)
 
@@ -127,21 +134,24 @@ def load_warrant_data():
         # --- NEW: COMPREHENSIVE LIVE FX RATE CONVERSION ---
         # Fetching precise "To-AUD" multipliers
         fx_tickers = ['USDAUD=X', 'JPYAUD=X', 'EURAUD=X', 'GBPAUD=X', 'NZDAUD=X']
-        fx_rates = {t: 1.0 for t in fx_tickers}
-        
+        # NaN = not fetched. Rows using a missing rate get blank Bid/Ask instead of a silent 1.0.
+        fx_rates = {t: np.nan for t in fx_tickers}
+
         try:
-            fx_data = yf.download(fx_tickers, period="1d", progress=False)
+            # 5 days so a weekend or holiday still gives the latest close
+            fx_data = yf.download(fx_tickers, period="5d", progress=False)
             if 'Close' in fx_data:
                 for ticker in fx_tickers:
                     try:
-                        val = float(fx_data['Close'].iloc[-1]) if len(fx_tickers) == 1 else float(fx_data['Close'][ticker].iloc[-1])
-                        if pd.notna(val):
-                            fx_rates[ticker] = val
-                    except:
+                        series = fx_data['Close'] if len(fx_tickers) == 1 else fx_data['Close'][ticker]
+                        series = series.dropna()
+                        if not series.empty:
+                            fx_rates[ticker] = float(series.iloc[-1])
+                    except Exception:
                         pass
-        except:
+        except Exception:
             pass
-            
+
         df['FX Rate'] = 1.0
         
         # 1. USD Underlyings
@@ -159,7 +169,13 @@ def load_warrant_data():
         df.loc[df['Underlying'] == 'AUD-EUR FX Currency Pair', 'FX Rate'] = fx_rates['EURAUD=X']
         df.loc[df['Underlying'] == 'AUD-GBP FX Currency Pair', 'FX Rate'] = fx_rates['GBPAUD=X']
         df.loc[df['Underlying'] == 'AUD-NZD FX Currency Pair', 'FX Rate'] = fx_rates['NZDAUD=X']
-        
+
+        failed_fx = [t.replace('=X', '') for t in fx_tickers if pd.isna(fx_rates[t])]
+        fx_missing = df['FX Rate'].isna()
+        if fx_missing.any():
+            affected = sorted(df.loc[fx_missing, 'Underlying'].dropna().astype(str).unique().tolist())
+            data_warnings.append(f"Live FX rates could not be loaded for {', '.join(failed_fx)}. Bid/Ask are blank for: {', '.join(affected)}.")
+
         df['Type'] = df['Type'].replace({
             'MINI Long': '🟩 MINI Long ▲', 
             'MINI Short': '🟥 MINI Short ▼'
@@ -180,54 +196,69 @@ def load_warrant_data():
                 if df[col].dropna().max() <= 10.0: df[col] = df[col] * 100
 
         # --- GLOBAL BULK LIVE PRICING FETCH ---
+        df['Price Source'] = 'Sheet'
         unique_tickers = [t for t in df['Ticker'].dropna().unique().tolist() if t]
         if unique_tickers:
             try:
-                live_data = yf.download(unique_tickers, period="1d", progress=False)
+                live_data = yf.download(unique_tickers, period="5d", progress=False)
                 if 'Close' in live_data:
                     close_data = live_data['Close']
                     for ticker in unique_tickers:
                         try:
-                            if len(unique_tickers) == 1:
-                                live_p = float(close_data.iloc[-1])
-                            else:
-                                live_p = float(close_data[ticker].iloc[-1])
-                            
-                            if pd.notna(live_p):
-                                df.loc[df['Ticker'] == ticker, 'Underlying Spot Price'] = live_p
-                        except:
+                            series = close_data if len(unique_tickers) == 1 else close_data[ticker]
+                            series = series.dropna()
+
+                            if not series.empty:
+                                df.loc[df['Ticker'] == ticker, 'Underlying Spot Price'] = float(series.iloc[-1])
+                                df.loc[df['Ticker'] == ticker, 'Price Source'] = 'Live'
+                        except Exception:
                             pass
-            except Exception as e:
-                pass 
-                
+            except Exception:
+                pass
+
+        # FX pair codes have no Yahoo ticker, so the sheet price is expected for them
+        stale_rows = (df['Price Source'] == 'Sheet') & df['Ticker'].notna()
+        if stale_rows.any():
+            data_warnings.append(f"Live prices could not be loaded for {int(stale_rows.sum())} warrant(s), so they use the Google Sheet price. These show 'Sheet' in the Price column.")
+
         # --- GLOBAL DYNAMIC BID/ASK MATH ---
         spot = pd.to_numeric(df['Underlying Spot Price'], errors='coerce')
         strike = pd.to_numeric(df['Strike'], errors='coerce')
-        mult = pd.to_numeric(df['Multiplier'], errors='coerce').fillna(1.0)
-        mult = np.where(mult == 0, 1.0, mult)
-        
-        fx = pd.to_numeric(df['FX Rate'], errors='coerce').fillna(1.0)
-        fx = np.where(fx == 0, 1.0, fx)
-        
+        # A blank or 0 multiplier is treated as missing (not 1), so Bid/Ask stay blank instead of mispriced
+        mult = pd.to_numeric(df['Multiplier'], errors='coerce')
+        mult = mult.where(mult != 0)
+        df['Multiplier'] = mult
+
+        bad_mult = mult.isna()
+        if bad_mult.any():
+            codes = df.loc[bad_mult, 'Code'].astype(str).tolist()
+            shown = ', '.join(codes[:10]) + (f" and {len(codes) - 10} more" if len(codes) > 10 else "")
+            data_warnings.append(f"The Multiplier is blank or 0 in the Google Sheet for: {shown}. These have no Bid/Ask and can't be opened in the calculator.")
+
+        fx = pd.to_numeric(df['FX Rate'], errors='coerce')
+
         is_long = df['Type'].str.contains('Long', case=False, na=False)
         midpoints = np.where(is_long, (spot - strike) * mult, (strike - spot) * mult)
-        midpoints = np.maximum(0.0, midpoints)
-        
+        midpoints = np.maximum(0.0, midpoints)  # NaN inputs stay NaN
+
         # Apply the FX conversion (Multiplying to convert to AUD)
         midpoints = midpoints * fx
-        
+
         df['Bid'] = np.maximum(0.0, midpoints - 0.01)
         df['Ask'] = midpoints + 0.01
 
-        return df, funding_error
+        return df, funding_error, data_warnings
     except Exception as e:
         st.error(f"⚠️ Could not load data from Google Sheets. Error: {e}")
-        return pd.DataFrame(), funding_error
+        return pd.DataFrame(), funding_error, data_warnings
 
-warrants_df, current_funding_error = load_warrant_data()
+warrants_df, current_funding_error, current_data_warnings = load_warrant_data()
 
 if current_funding_error:
     st.error(f"⚠️ **Connection Alert:** The app could not read your new Funding Tab link, so it is temporarily using safety fallbacks (8.7% and -1.5%). Update the `FUNDING_CSV_URL` in your code with the correct tab GID. *(Error: {current_funding_error})*")
+
+for warning_msg in current_data_warnings:
+    st.warning(f"⚠️ {warning_msg}")
 
 # --- 2. SEARCH MODULE ---
 if not warrants_df.empty:
@@ -275,7 +306,7 @@ if not warrants_df.empty:
     sl_dist_col = 'Distance to Stop Loss'
     if sl_dist_col in filtered_df.columns: display_cols.append(sl_dist_col)
     
-    display_cols.extend(['Bid', 'Ask'])
+    display_cols.extend(['Bid', 'Ask', 'Price Source'])
     display_cols = [c for c in display_cols if c in filtered_df.columns]
 
     selection_event = st.dataframe(
@@ -291,7 +322,8 @@ if not warrants_df.empty:
             ko_col: st.column_config.NumberColumn("Dist. to Knock-Out", format="%.2f%%"),
             sl_dist_col: st.column_config.NumberColumn("Distance to Stop", format="%.2f%%"),
             "Bid": st.column_config.NumberColumn("Bid", format="$%.3f"),
-            "Ask": st.column_config.NumberColumn("Ask", format="$%.3f")
+            "Ask": st.column_config.NumberColumn("Ask", format="$%.3f"),
+            "Price Source": st.column_config.TextColumn("Price", help="Live = Yahoo Finance. Sheet = Google Sheet price (live price unavailable).")
         }
     )
 
@@ -306,9 +338,16 @@ if not warrants_df.empty:
         sheet_price = warrant.get('Underlying Spot Price')
         live_price = float(sheet_price) if pd.notna(sheet_price) else 0.0
 
+        if pd.isna(warrant.get('Multiplier')):
+            st.error(f"⚠️ {warrant['Code']} has no Multiplier in the Google Sheet, so it can't be priced. Fix the sheet and refresh.")
+            st.stop()
+        if pd.isna(warrant.get('FX Rate')):
+            st.error(f"⚠️ The live FX rate for {warrant['Underlying']} couldn't be loaded, so {warrant['Code']} can't be priced in AUD. Try again in a few minutes.")
+            st.stop()
+
         strike = float(warrant['Strike']) if pd.notna(warrant['Strike']) else 0.0
-        multiplier = float(warrant.get('Multiplier', 1.0)) if pd.notna(warrant.get('Multiplier')) else 1.0
-        fx_rate = float(warrant.get('FX Rate', 1.0))
+        multiplier = float(warrant['Multiplier'])
+        fx_rate = float(warrant['FX Rate'])
         stop_loss = float(warrant.get('Stop Loss Trigger Level', 0.0)) if pd.notna(warrant.get('Stop Loss Trigger Level')) else 0.0
 
         if 'current_warrant_code' not in st.session_state or st.session_state.current_warrant_code != warrant['Code']:
@@ -356,7 +395,7 @@ if not warrants_df.empty:
                 </div>
                 <div style="text-align: right;">
                     <div class="header-title" style="color: #4ade80;">${live_price:.2f}</div>
-                    <div class="header-sub">Current Underlying Spot</div>
+                    <div class="header-sub">Current Underlying Spot ({'Live' if warrant.get('Price Source') == 'Live' else 'Google Sheet price'})</div>
                     <span class="mock-button" style="margin-top: 5px;">{warrant['Code']}</span>
                 </div>
             </div>
